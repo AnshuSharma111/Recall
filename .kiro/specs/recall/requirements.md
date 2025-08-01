@@ -2,7 +2,7 @@
 
 ## Introduction
 
-The Flashcard Generator is a local-first, AI-powered educational tool that transforms various content types (text, PDFs, images, audio) into structured flashcards with intelligent spaced repetition. The system emphasizes offline functionality, gamified learning experiences, and efficient content organization to enhance knowledge retention and engagement.
+Recall is a local-first, AI-powered educational tool that transforms various content types (text, PDFs, images, audio) into structured flashcards with intelligent spaced repetition. The system emphasizes offline functionality, gamified learning experiences, and efficient content organization to enhance knowledge retention and engagement.
 
 ## Requirements
 

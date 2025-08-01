@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Flashcard Generator is architected as a local-first desktop application with a modular pipeline design. The system processes multiple input types through specialized handlers, generates flashcards using local AI models, and provides an engaging study experience with spaced repetition algorithms. All processing occurs locally to ensure privacy and offline functionality.
+Recall is architected as a local-first desktop application with a modular pipeline design. The system processes multiple input types through specialized handlers, generates flashcards using local AI models, and provides an engaging study experience with spaced repetition algorithms. All processing occurs locally to ensure privacy and offline functionality.
 
 ## Architecture
 

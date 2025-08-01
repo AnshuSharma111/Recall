@@ -154,4 +154,4 @@ MIT License - see LICENSE file for details
 
 ## Roadmap
 
-See the implementation plan in `.kiro/specs/flashcard-generator/tasks.md` for detailed development roadmap and current progress.
+See the implementation plan in `.kiro/specs/recall/tasks.md` for detailed development roadmap and current progress.

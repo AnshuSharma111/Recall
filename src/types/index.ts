@@ -1,4 +1,4 @@
-// Core type definitions for the Flashcard Generator application
+// Core type definitions for the Recall application
 export * from './content';
 export * from './flashcard';
 export * from './study';
