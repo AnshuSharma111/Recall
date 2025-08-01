@@ -1,6 +1,23 @@
-# Recall
+# 🧠 Recall
 
-AI-powered local flashcard generator with spaced repetition
+> **AI-powered local flashcard generator with intelligent spaced repetition**
+
+Transform your study materials into smart flashcards without compromising privacy. Recall processes text, PDFs, images, and audio entirely on your device using local AI models.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Electron](https://img.shields.io/badge/Electron-191970?logo=Electron&logoColor=white)](https://www.electronjs.org/)
+[![React](https://img.shields.io/badge/React-20232A?logo=react&logoColor=61DAFB)](https://reactjs.org/)
+
+## ✨ Why Recall?
+
+**🔒 Privacy First** - Your data never leaves your device. No cloud, no tracking, no compromises.
+
+**🤖 AI-Powered** - Intelligent content analysis transforms any material into effective study cards.
+
+**🧠 Smart Learning** - Spaced repetition algorithm adapts to your learning patterns for optimal retention.
+
+**📱 Offline Ready** - Complete functionality without internet dependency after initial setup.
 
 ## Overview
 
