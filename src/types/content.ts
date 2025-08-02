@@ -1,4 +1,5 @@
 // Content processing and extraction types
+import { ValidationError } from '../models/validation';
 
 export interface ExtractedContent {
   text: string;
@@ -7,6 +8,8 @@ export interface ExtractedContent {
     format: string;
     extractedAt: Date;
     confidence?: number;
+    size?: number;
+    originalFileName?: string;
   };
 }
 
@@ -16,6 +19,12 @@ export interface ContentChunk {
   position: number;
   context: string;
   importance: number;
+  metadata?: {
+    source: string;
+    chunkType: string;
+    wordCount: number;
+    sentenceCount: number;
+  };
 }
 
 export interface Keyword {
@@ -35,7 +44,7 @@ export enum KeywordCategory {
 
 export interface ValidationResult {
   isValid: boolean;
-  errors: string[];
+  errors: ValidationError[];
   warnings: string[];
 }
 

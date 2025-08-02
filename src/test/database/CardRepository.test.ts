@@ -8,7 +8,7 @@ import * as fs from 'fs';
 // Mock electron app
 vi.mock('electron', () => ({
   app: {
-    getPath: vi.fn(() => './test-data')
+    getPath: vi.fn()
   }
 }));
 
@@ -16,17 +16,24 @@ describe('CardRepository', () => {
   let dbConnection: DatabaseConnection;
   let cardRepository: CardRepository;
   let deckRepository: DeckRepository;
-  const testDbPath = './test-data/recall.db';
+  let testDataDir: string;
+  let testDbPath: string;
 
   beforeEach(async () => {
-    // Clean up any existing test database
-    if (fs.existsSync(testDbPath)) {
-      fs.unlinkSync(testDbPath);
-    }
+    // Create unique test directory for each test
+    testDataDir = `./test-data-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    testDbPath = `${testDataDir}/recall.db`;
+    
+    // Mock the app.getPath to return our unique test directory
+    const { app } = await import('electron');
+    vi.mocked(app.getPath).mockReturnValue(testDataDir);
+    
+    // Reset singleton instance
+    (DatabaseConnection as any).instance = null;
     
     // Ensure test data directory exists
-    if (!fs.existsSync('./test-data')) {
-      fs.mkdirSync('./test-data', { recursive: true });
+    if (!fs.existsSync(testDataDir)) {
+      fs.mkdirSync(testDataDir, { recursive: true });
     }
 
     dbConnection = DatabaseConnection.getInstance();
@@ -53,12 +60,23 @@ describe('CardRepository', () => {
     deckRepository.create(testDeck);
   });
 
-  afterEach(() => {
-    dbConnection.close();
+  afterEach(async () => {
+    try {
+      dbConnection.close();
+    } catch (error) {
+      // Ignore close errors
+    }
     
-    // Clean up test database
-    if (fs.existsSync(testDbPath)) {
-      fs.unlinkSync(testDbPath);
+    // Clean up test database and directory
+    try {
+      if (fs.existsSync(testDbPath)) {
+        fs.unlinkSync(testDbPath);
+      }
+      if (fs.existsSync(testDataDir)) {
+        fs.rmdirSync(testDataDir);
+      }
+    } catch (error) {
+      // Ignore cleanup errors
     }
   });
 

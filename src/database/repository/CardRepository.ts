@@ -22,7 +22,6 @@ export class CardRepository extends BaseRepository<FlashCard> {
   protected mapEntityToRow(entity: FlashCard): any {
     return {
       id: entity.id,
-      deck_id: '', // This will be set when adding to deck
       front: entity.front,
       back: entity.back,
       type: entity.type,
@@ -196,6 +195,53 @@ export class CardRepository extends BaseRepository<FlashCard> {
       return result.changes;
     } catch (error) {
       console.error('Error deleting cards by deck ID:', error);
+      throw error;
+    }
+  }
+
+  public update(id: string, updates: Partial<FlashCard>): FlashCard | null {
+    try {
+      const existing = this.findById(id);
+      if (!existing) {
+        return null;
+      }
+
+      // Get the current deck_id from the database to preserve it
+      const currentCardRow = this.db.prepare('SELECT deck_id FROM cards WHERE id = ?').get(id) as { deck_id: string };
+      if (!currentCardRow) {
+        return null;
+      }
+
+      const updatedEntity = { ...existing, ...updates };
+      const row = this.mapEntityToRow(updatedEntity);
+      
+      // Build the SET clause excluding id and deck_id (preserve existing deck_id)
+      const setClause = Object.keys(row)
+        .filter(key => key !== 'id')
+        .map(key => `${key} = ?`)
+        .join(', ');
+      
+      const values = Object.entries(row)
+        .filter(([key]) => key !== 'id')
+        .map(([, value]) => value);
+      
+      values.push(id);
+
+      const stmt = this.db.prepare(`
+        UPDATE ${this.tableName} 
+        SET ${setClause} 
+        WHERE id = ?
+      `);
+
+      const result = stmt.run(...values);
+      
+      if (result.changes === 0) {
+        throw new Error(`Failed to update entity in ${this.tableName}`);
+      }
+
+      return updatedEntity;
+    } catch (error) {
+      console.error(`Error updating entity in ${this.tableName}:`, error);
       throw error;
     }
   }

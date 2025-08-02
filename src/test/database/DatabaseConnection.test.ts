@@ -6,7 +6,7 @@ import * as path from 'path';
 // Mock electron app
 vi.mock('electron', () => ({
   app: {
-    getPath: vi.fn(() => `./test-data-${Date.now()}`)
+    getPath: vi.fn()
   }
 }));
 
@@ -21,7 +21,8 @@ describe('DatabaseConnection', () => {
     testDbPath = path.join(testDataDir, 'recall.db');
     
     // Mock the app.getPath to return our unique test directory
-    vi.mocked(require('electron').app.getPath).mockReturnValue(testDataDir);
+    const { app } = await import('electron');
+    vi.mocked(app.getPath).mockReturnValue(testDataDir);
     
     // Reset singleton instance
     (DatabaseConnection as any).instance = null;
@@ -124,7 +125,7 @@ describe('DatabaseConnection', () => {
     
     const foreignKeysEnabled = db.pragma('foreign_keys');
     
-    expect(foreignKeysEnabled).toBe(1);
+    expect(foreignKeysEnabled[0].foreign_keys).toBe(1);
   });
 
   it('should get database statistics', async () => {

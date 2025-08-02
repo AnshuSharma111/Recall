@@ -8,7 +8,7 @@ import * as path from 'path';
 // Mock electron app
 vi.mock('electron', () => ({
   app: {
-    getPath: vi.fn(() => `./test-data-${Date.now()}`)
+    getPath: vi.fn()
   }
 }));
 
@@ -24,7 +24,8 @@ describe('DeckRepository', () => {
     testDbPath = path.join(testDataDir, 'recall.db');
     
     // Mock the app.getPath to return our unique test directory
-    vi.mocked(require('electron').app.getPath).mockReturnValue(testDataDir);
+    const { app } = await import('electron');
+    vi.mocked(app.getPath).mockReturnValue(testDataDir);
     
     // Reset singleton instance
     (DatabaseConnection as any).instance = null;
