@@ -1,4 +1,5 @@
 // Gamification and engagement types
+import { DifficultyLevel } from './flashcard';
 
 export interface StreakInfo {
   currentStreak: number;

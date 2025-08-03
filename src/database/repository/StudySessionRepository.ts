@@ -1,5 +1,5 @@
 import { BaseRepository } from './BaseRepository';
-import { StudySession, SessionType, StudyResponse } from '../../types';
+import { StudySession, SessionType } from '../../types';
 
 export class StudySessionRepository extends BaseRepository<StudySession> {
   constructor() {

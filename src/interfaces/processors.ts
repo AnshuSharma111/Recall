@@ -8,6 +8,15 @@ import {
   QualityScore 
 } from '../types';
 
+// Re-export types for convenience
+export type { 
+  ExtractedContent, 
+  ContentChunk, 
+  Keyword, 
+  FlashCard, 
+  QualityScore 
+};
+
 export interface ContentPreprocessor {
   chunkContent(content: ExtractedContent): ContentChunk[];
   cleanText(text: string): string;

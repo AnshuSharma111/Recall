@@ -267,7 +267,16 @@ describe('UserManager', () => {
         preferences: {
           theme: 'dark',
           studySettings: {
-            defaultSessionLength: 25
+            defaultSessionLength: 25,
+            autoAdvanceCards: false,
+            showTimer: false,
+            enableSounds: true,
+            defaultDifficulty: 'hard' as const,
+            spacedRepetitionSettings: {
+              maxNewCardsPerDay: 15,
+              maxReviewCardsPerDay: 80,
+              difficultyMultiplier: 1.5
+            }
           }
         }
       });

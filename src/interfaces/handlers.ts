@@ -9,6 +9,16 @@ import {
   TranscriptionProgress 
 } from '../types';
 
+// Re-export types for convenience
+export type { 
+  ExtractedContent, 
+  ValidationResult, 
+  QualityAssessment, 
+  OCRResult, 
+  TranscriptionResult, 
+  TranscriptionProgress 
+};
+
 export interface TextHandler {
   supportedFormats: string[];
   extractText(file: File): Promise<ExtractedContent>;

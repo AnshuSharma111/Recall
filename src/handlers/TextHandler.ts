@@ -1,6 +1,6 @@
 import { TextHandler, ExtractedContent, ValidationResult } from '../interfaces/handlers';
 import { ValidationError } from '../models/validation';
-import * as fs from 'fs';
+// File system operations handled by other modules
 import * as path from 'path';
 import pdfParse from 'pdf-parse';
 import * as mammoth from 'mammoth';

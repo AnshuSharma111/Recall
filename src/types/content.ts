@@ -32,6 +32,9 @@ export interface Keyword {
   importance: number;
   context: string[];
   category: KeywordCategory;
+  frequency?: number;
+  chunkCount?: number;
+  rank?: number;
 }
 
 export enum KeywordCategory {

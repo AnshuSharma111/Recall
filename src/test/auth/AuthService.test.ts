@@ -196,7 +196,16 @@ describe('AuthService', () => {
       const success = await authService.updateUserPreferences({
         theme: 'dark',
         studySettings: {
-          defaultSessionLength: 30
+          defaultSessionLength: 30,
+          autoAdvanceCards: true,
+          showTimer: true,
+          enableSounds: false,
+          defaultDifficulty: 'medium' as const,
+          spacedRepetitionSettings: {
+            maxNewCardsPerDay: 20,
+            maxReviewCardsPerDay: 100,
+            difficultyMultiplier: 1.3
+          }
         }
       });
       

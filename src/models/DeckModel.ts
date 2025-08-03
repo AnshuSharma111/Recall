@@ -1,4 +1,4 @@
-import { Deck, DeckSettings, FlashCard, CardType, DifficultyLevel } from '../types';
+import { Deck, DeckSettings, CardType, DifficultyLevel } from '../types';
 import { ModelValidator, ValidationResult, ValidationError } from './validation';
 import { FlashCardModel } from './FlashCardModel';
 import { v4 as uuidv4 } from 'uuid';

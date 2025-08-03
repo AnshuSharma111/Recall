@@ -12,6 +12,11 @@
     "build:electron": "tsc -p tsconfig.electron.json",
     "test": "vitest --run",
     "test:watch": "vitest",
+    "test:ollama": "node scripts/test-ollama.js",
+    "test:ollama:quick": "node test-ollama-now.js",
+    "demo:workflow": "npx tsx src/examples/completeWorkflowExample.ts",
+    "demo:workflow:quick": "npx tsx src/examples/completeWorkflowExample.ts --quick",
+    "setup:ollama": "npx tsx src/examples/ollamaIntegrationTest.ts --setup",
     "lint": "eslint src --ext .ts,.tsx",
     "lint:fix": "eslint src --ext .ts,.tsx --fix"
   },

@@ -5,6 +5,8 @@
  * designed for offline operation with future multi-user support capabilities.
  */
 
+import { AuthService } from './AuthService';
+
 export { AuthService } from './AuthService';
 export { UserManager } from './UserManager';
 export type {

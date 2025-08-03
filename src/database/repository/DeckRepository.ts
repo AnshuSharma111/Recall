@@ -113,7 +113,7 @@ export class DeckRepository extends BaseRepository<Deck> {
       
       return rows.map(row => ({
         ...this.mapRowToEntity(row),
-        cardCount: row.card_count || 0
+        cardCount: (row as any).card_count || 0
       }));
     } catch (error) {
       console.error('Error getting decks with card counts:', error);

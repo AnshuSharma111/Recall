@@ -115,9 +115,9 @@ describe('DatabaseConnection', () => {
     const userStats = db.prepare('SELECT * FROM user_statistics WHERE id = 1').get();
     
     expect(userStats).toBeDefined();
-    expect(userStats.id).toBe(1);
-    expect(userStats.total_cards_studied).toBe(0);
-    expect(userStats.current_streak).toBe(0);
+    expect((userStats as any).id).toBe(1);
+    expect((userStats as any).total_cards_studied).toBe(0);
+    expect((userStats as any).current_streak).toBe(0);
   });
 
   it('should enable foreign keys', async () => {
@@ -125,7 +125,7 @@ describe('DatabaseConnection', () => {
     
     const foreignKeysEnabled = db.pragma('foreign_keys');
     
-    expect(foreignKeysEnabled[0].foreign_keys).toBe(1);
+    expect((foreignKeysEnabled as any)[0].foreign_keys).toBe(1);
   });
 
   it('should get database statistics', async () => {
