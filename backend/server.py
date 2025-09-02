@@ -4,7 +4,13 @@ from dotenv import load_dotenv
 import os
 import logging
 
-from file_processing import chunking, pdf_to_img
+# Try to import file_processing modules, handle missing dependencies gracefully
+try:
+    from file_processing import chunking, pdf_to_img
+    FILE_PROCESSING_AVAILABLE = True
+except ImportError as e:
+    FILE_PROCESSING_AVAILABLE = False
+    # We'll log this error after logging is configured
 
 # Configure logging
 log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server.log")
@@ -18,6 +24,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 logger.info("=== Server starting ===")  # server start
+
+# Log file processing module availability
+if not FILE_PROCESSING_AVAILABLE:
+    logger.error("File processing modules not available. Missing dependencies: paddleocr, pdf2image")
+    logger.warning("Some endpoints may not function properly without file processing capabilities")
+else:
+    logger.info("File processing modules loaded successfully")
 
 app = FastAPI(
     description= '''
@@ -92,6 +105,15 @@ async def create_deck(files: List[UploadFile] = File(...)):
     '''
     global current_ws
     logger.info(f"POST /api/create_deck called with {len(files)} files.")
+    
+    # Check if file processing is available
+    if not FILE_PROCESSING_AVAILABLE:
+        logger.error("Cannot process files: file processing modules not available")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="File processing is not available. Missing required dependencies."
+        )
+    
     # verify file type (allowed: pdf, jpg, png)
     for file in files:
         if file.filename == "" or file.filename is None:
