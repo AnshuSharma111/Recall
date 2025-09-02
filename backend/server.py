@@ -92,6 +92,7 @@ async def create_deck(files: List[UploadFile] = File(...)):
     '''
     global current_ws
     logger.info(f"POST /api/create_deck called with {len(files)} files.")
+
     # verify file type (allowed: pdf, jpg, png)
     for file in files:
         if file.filename == "" or file.filename is None:
