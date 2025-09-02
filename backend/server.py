@@ -1,36 +1,75 @@
-from fastapi import File, UploadFile, FastAPI, Depends, HTTPException, status, Header, WebSocket
-from typing import List
-from dotenv import load_dotenv
-import os
+import asyncio
 import logging
+import os
+import sys
 
-# Try to import file_processing modules, handle missing dependencies gracefully
+from typing import List, Callable
+from dotenv import load_dotenv
+
+import uvicorn
+from contextlib import asynccontextmanager
+from fastapi import File, UploadFile, FastAPI, Depends, HTTPException, status, Header, WebSocket
+
+# Create a module-level flag file to track initialization
+_INIT_FLAG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".initialized")
+
+# Function to check if this is the first run
+def is_first_run():
+    if not os.path.exists(_INIT_FLAG_FILE):
+        # Create the flag file
+        with open(_INIT_FLAG_FILE, 'w') as f:
+            f.write("initialized")
+        return True
+    return False
+
+# Critical Imports
+logger: logging.Logger = None # type: ignore
+pdf_to_img: Callable
+chunk_files: Callable
+
+# Check if this is the first run
+first_run = is_first_run()
+
+# Set up logging
 try:
-    from file_processing import chunking, pdf_to_img
-    FILE_PROCESSING_AVAILABLE = True
+    from utils.logger_config import config_logger, get_logger
+    # Initialize the logger once for the entire application
+    config_logger()
+    # Get the logger for this module
+    logger = get_logger() #type: ignore
+    
+    # Only log on first initialization
+    if first_run:
+        logger.info("Logger imported successfully.")
 except ImportError as e:
-    FILE_PROCESSING_AVAILABLE = False
-    # We'll log this error after logging is configured
+    logger = None # type: ignore
+    sys.stderr.write(f"Error importing utils module: {e}\nShutting Down...")
+    raise SystemExit(1) # 1 means failure
 
-# Configure logging
-log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server.log")
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler(log_path, mode='a'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
-logger.info("=== Server starting ===")  # server start
+# Set up file processing
+try:
+    import file_processing
+    pdf_to_img = file_processing.pdf_to_img
+    chunk_files = file_processing.chunk_files
+    
+    # Only log this once
+    if first_run:
+        logger.info("File processing modules imported successfully.")
+except ImportError as e:
+    logger.error(f"Error importing file_processing module: {e}\nShutting Down...")
+    sys.stderr.write(f"Error importing file_processing module: {e}\nShutting Down...")
+    pdf_to_img = None # type: ignore
+    chunk_files = None # type: ignore
+    raise SystemExit(1)
 
-# Log file processing module availability
-if not FILE_PROCESSING_AVAILABLE:
-    logger.error("File processing modules not available. Missing dependencies: paddleocr, pdf2image")
-    logger.warning("Some endpoints may not function properly without file processing capabilities")
-else:
-    logger.info("File processing modules loaded successfully")
+# Pre and Post server operations
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # pre
+    logger.info("Application startup (via lifespan manager)...")
+    yield
+    # post
+    logger.info("Application shutdown...")
 
 app = FastAPI(
     description= '''
@@ -40,10 +79,22 @@ flashcards to memorize their notes. The basic crust of Recall is:
 “Upload your notes to Recall and have it auto-generate high-quality flashcards for 
 you automatically using AI” 
     ''',
-    version="0.1.0"
+    version="0.1.0",
+    title="Recall",
+    lifespan=lifespan
 )
 
-# Job management
+@app.get('/')
+def health_check():
+    '''
+    Health Check Endpoint
+    '''
+    logger.info("Health check endpoint called")
+    return {
+        "Status" : "Running"
+    }
+
+# # Job management
 current_ws: WebSocket = None # type: ignore
 
 @app.websocket("/ws")
@@ -89,15 +140,6 @@ def api_key_auth(x_api_key: str = Header(..., alias="X-API-Key")):
         )
     return {"API Key": x_api_key}
 
-@app.get('/')
-def health_check():
-    '''
-    Health Check Endpoint
-    '''
-    return {
-        "Status" : "Running"
-    }
-
 @app.post('/api/create_deck', dependencies=[Depends(api_key_auth)])
 async def create_deck(files: List[UploadFile] = File(...)):
     '''
@@ -105,14 +147,6 @@ async def create_deck(files: List[UploadFile] = File(...)):
     '''
     global current_ws
     logger.info(f"POST /api/create_deck called with {len(files)} files.")
-    
-    # Check if file processing is available
-    if not FILE_PROCESSING_AVAILABLE:
-        logger.error("Cannot process files: file processing modules not available")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="File processing is not available. Missing required dependencies."
-        )
     
     # verify file type (allowed: pdf, jpg, png)
     for file in files:
@@ -149,7 +183,16 @@ async def create_deck(files: List[UploadFile] = File(...)):
     for file in saved_files:
         if file.endswith(".pdf"):
             logger.info(f"Converting PDF to images: {file}")
-            pdf_to_img(file, './to_process/images')
+            # we know pdf_to_img is a callable function here
+            if pdf_to_img:
+                pdf_to_img(file, './to_process/images')
+            else:
+                # This shouldn't happen because of the earlier check, but just to be safe
+                logger.error("PDF to image conversion function not available")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="PDF processing functionality is unavailable"
+                )
         else:
             os.makedirs('./to_process/images', exist_ok=True)
             with open(os.path.join('./to_process/images', os.path.basename(file)), "wb") as f:
@@ -174,3 +217,20 @@ async def get_deck(deck_id: str):
         "Deck ID": deck_id,
         "Status": "Deck Retrieved"
     }
+
+async def main():
+    config = uvicorn.Config("server:app",
+                            host="127.0.0.1", 
+                            port=8000,
+                            log_config=None,
+                            reload=False  # Disable reload to prevent duplicate imports
+                            )
+    server = uvicorn.Server(config)
+    await server.serve()
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        logger.exception(f"Startup failed: {e}")
+        raise SystemExit(1)
