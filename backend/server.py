@@ -67,8 +67,36 @@ except ImportError as e:
 async def lifespan(app: FastAPI):
     # pre
     logger.info("Application startup (via lifespan manager)...")
+    
+    # Ensure necessary directories exist
+    upload_dir = './to_process'
+    os.makedirs(upload_dir, exist_ok=True)
+    logger.info(f"Ensured upload directory exists: {upload_dir}")
+    
     yield
     # post
+    # recursively delete all files in the to_process directory
+    if os.path.exists(upload_dir):
+        for root, dirs, files in os.walk(upload_dir, topdown=False):
+            for name in files:
+                file_path = os.path.join(root, name)
+                try:
+                    os.remove(file_path)
+                    logger.debug(f"Deleted file: {file_path}")
+                except Exception as e:
+                    logger.error(f"Error deleting file {file_path}: {e}")
+            for name in dirs:
+                dir_path = os.path.join(root, name)
+                try:
+                    os.rmdir(dir_path)
+                    logger.debug(f"Deleted directory: {dir_path}")
+                except Exception as e:
+                    logger.error(f"Error deleting directory {dir_path}: {e}")
+        try:
+            os.rmdir(upload_dir)
+            logger.debug(f"Deleted upload directory: {upload_dir}")
+        except Exception as e:
+            logger.error(f"Error deleting upload directory {upload_dir}: {e}")
     logger.info("Application shutdown...")
 
 app = FastAPI(
@@ -147,60 +175,174 @@ async def create_deck(files: List[UploadFile] = File(...)):
     '''
     global current_ws
     logger.info(f"POST /api/create_deck called with {len(files)} files.")
-    
-    # verify file type (allowed: pdf, jpg, png)
+
+    if len(files) == 0:
+        logger.error("No files uploaded.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": 10,
+                "message": "No files uploaded",
+                "source": "N/A"
+            }
+        )
+
+    await send_ws("Verifying Files")
+    logger.info("Verifying uploaded files...")
+
+    for file in files:
+        print(file.filename)
+
     for file in files:
         if file.filename == "" or file.filename is None:
             logger.error("Invalid file name detected.")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid file name"
+                detail={
+                    "code": 11,
+                    "message": "Invalid file name",
+                    "source": f"{file.filename}"
+                }
             )
-        if not file.content_type in ["application/pdf", "image/jpeg", "image/png"]:
+        if not file.content_type in ["application/pdf", "image/jpeg", "image/png", "image/jpg"]:
             logger.error(f"Invalid file type: {file.content_type}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid file type: {file.content_type}. Allowed types are: pdf, jpg, png"
+                detail={
+                    "code": 12,
+                    "message": "Invalid file type",
+                    "source": f"{file.filename}"
+                }
             )
+
     await send_ws("Verification Complete")
     logger.info("File verification complete.")
 
     # Save files for processing
-    upload_dir = './to_process'
-    os.makedirs(upload_dir, exist_ok=True)
-    saved_files = []
-    for file in files:
-        file_path = os.path.join(upload_dir, str(file.filename))
-        with open(file_path, "wb") as f:
-            f.write(await file.read())
-        saved_files.append(file_path)
-        logger.info(f"Saved file: {file_path}")
+    try:
+        upload_dir = './to_process'
+        os.makedirs(upload_dir, exist_ok=True)
+        saved_files = []
+        for file in files:
+            file_path = os.path.join(upload_dir, str(file.filename))
+            with open(file_path, "wb") as f:
+                f.write(await file.read())
+            saved_files.append(file_path)
+            logger.info(f"Saved file: {file_path}")
+    except Exception as e:
+        logger.error(f"Error saving files: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": 13,
+                "message": "Error saving files",
+                "source": str(e)
+            }
+        )
 
     await send_ws("Saved Files")
     logger.info("All files saved.")
 
-    # Start processing : 1) Convert all pdfs to images and save to a dir. Leave images as is but store in common dir
+    # Start processing : 1) Convert all pdfs to images and save to a dir with a subfolder per PDF. 
     for file in saved_files:
         if file.endswith(".pdf"):
             logger.info(f"Converting PDF to images: {file}")
             # we know pdf_to_img is a callable function here
             if pdf_to_img:
-                pdf_to_img(file, './to_process/images')
+                # Each PDF will be saved to its own subfolder within ./to_process/
+                pdf_to_img(file, './to_process')
             else:
                 # This shouldn't happen because of the earlier check, but just to be safe
                 logger.error("PDF to image conversion function not available")
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="PDF processing functionality is unavailable"
+                    detail={
+                        "code": 14,
+                        "message": "Pdf to Image module not loaded correctly",
+                        "source": f"{file}"
+                    }
                 )
         else:
-            os.makedirs('./to_process/images', exist_ok=True)
-            with open(os.path.join('./to_process/images', os.path.basename(file)), "wb") as f:
-                f.write(open(file, "rb").read())
-            logger.info(f"Copied image file: {file}")
+            # For image files, follow the same structure as PDFs - create a folder per image
+            img_basename = os.path.basename(file)
+            img_name = os.path.splitext(img_basename)[0]
+            img_output_dir = os.path.join('./to_process', img_name, 'images')
+            os.makedirs(img_output_dir, exist_ok=True)
+            
+            # Save the image
+            img_output_path = os.path.join(img_output_dir, img_basename)
+            try:
+                with open(file, "rb") as src_file:
+                    content = src_file.read()
+                    with open(img_output_path, "wb") as dst_file:
+                        dst_file.write(content)
+                logger.info(f"Copied image file: {file} to {img_output_dir}")
+                
+                # Remove the original file from the to_process root to avoid confusion
+                os.remove(file)
+                logger.debug(f"Removed original file from upload directory: {file}")
+            except Exception as e:
+                logger.error(f"Error copying image file {file}: {str(e)}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail={
+                        "code": 15,
+                        "message": "Error Copying IMG file",
+                        "source": f"{file}"
+                    }
+                )
 
     await send_ws("Converted PDFs to Images")
     logger.info("PDF conversion complete.")
+    
+    # Now process all images with chunking
+    if chunk_files:
+        logger.info("Starting image chunking process")
+        try:
+            await send_ws("Processing images with PaddleOCR")
+            
+            # Log what's in the to_process directory
+            to_process_dir = './to_process'
+            if os.path.exists(to_process_dir):
+                doc_dirs = [d for d in os.listdir(to_process_dir) 
+                          if os.path.isdir(os.path.join(to_process_dir, d))]
+                logger.info(f"Found {len(doc_dirs)} document directories in {to_process_dir}: {doc_dirs}")
+                
+                for doc_dir in doc_dirs:
+                    doc_path = os.path.join(to_process_dir, doc_dir)
+                    images_dir = os.path.join(doc_path, 'images')
+                    if os.path.exists(images_dir):
+                        images = [f for f in os.listdir(images_dir) 
+                                if os.path.isfile(os.path.join(images_dir, f))]
+                        logger.info(f"Document {doc_dir} has {len(images)} images: {images}")
+            else:
+                logger.warning(f"Directory {to_process_dir} does not exist!")
+            
+            # Process all documents in the to_process directory
+            chunk_files('./to_process')
+            await send_ws("Image processing complete")
+            logger.info("Image chunking completed successfully")
+        except Exception as e:
+            logger.error(f"Error during image chunking: {str(e)}")
+            await send_ws(f"Error processing images: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "code": 16,
+                    "message": "Error during image chunking",
+                    "source": str(e)
+                }
+            )
+    else:
+        logger.error("Image chunking function not available")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": 17,
+                "message": "Chunking module not loaded correctly",
+                "source": "N/A"
+            }
+        )
 
     return {
         "files": [os.path.basename(f) for f in saved_files],
