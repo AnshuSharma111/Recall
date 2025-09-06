@@ -26,6 +26,7 @@ def is_first_run():
 logger: logging.Logger = None # type: ignore
 pdf_to_img: Callable
 chunk_files: Callable
+process_document_dir: Callable
 
 # Check if this is the first run
 first_run = is_first_run()
@@ -52,6 +53,15 @@ try:
     pdf_to_img = file_processing.pdf_to_img
     chunk_files = file_processing.chunk_files
     
+    # Import OCR processing function
+    try:
+        from file_processing.ocr import process_document_dir
+        if first_run:
+            logger.info("OCR processing module imported successfully.")
+    except ImportError as e:
+        logger.error(f"Error importing OCR module: {e}")
+        process_document_dir = None # type: ignore
+    
     # Only log this once
     if first_run:
         logger.info("File processing modules imported successfully.")
@@ -60,6 +70,7 @@ except ImportError as e:
     sys.stderr.write(f"Error importing file_processing module: {e}\nShutting Down...")
     pdf_to_img = None # type: ignore
     chunk_files = None # type: ignore
+    process_document_dir = None # type: ignore
     raise SystemExit(1)
 
 # Pre and Post server operations
@@ -299,7 +310,7 @@ async def create_deck(files: List[UploadFile] = File(...)):
     if chunk_files:
         logger.info("Starting image chunking process")
         try:
-            await send_ws("Processing images with PaddleOCR")
+            await send_ws("Processing images with PaddleOCR for layout detection")
             
             # Log what's in the to_process directory
             to_process_dir = './to_process'
@@ -320,8 +331,33 @@ async def create_deck(files: List[UploadFile] = File(...)):
             
             # Process all documents in the to_process directory
             chunk_files('./to_process')
-            await send_ws("Image processing complete")
+            await send_ws("Layout detection complete")
             logger.info("Image chunking completed successfully")
+            
+            # Proceed with OCR processing after chunking
+            if process_document_dir:
+                logger.info("Starting OCR processing of detected elements")
+                await send_ws("Extracting text and formulas from detected elements")
+                try:
+                    # Process the chunks with OCR
+                    process_document_dir('./to_process')
+                    await send_ws("OCR processing complete")
+                    logger.info("OCR processing completed successfully")
+                except Exception as e:
+                    logger.error(f"Error during OCR processing: {str(e)}")
+                    await send_ws(f"Error during OCR processing: {str(e)}")
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail={
+                            "code": 18,
+                            "message": "Error during OCR processing",
+                            "source": str(e)
+                        }
+                    )
+            else:
+                logger.warning("OCR processing function not available, skipping OCR step")
+                await send_ws("Skipping OCR processing (module not available)")
+                
         except Exception as e:
             logger.error(f"Error during image chunking: {str(e)}")
             await send_ws(f"Error processing images: {str(e)}")

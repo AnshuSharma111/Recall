@@ -12,4 +12,12 @@ logger = get_logger()
 from .chunking import chunk_files
 from .pdf_to_img import pdf_to_img
 
+# Import OCR processing function
+try:
+    from .ocr import process_document_dir
+    logger.debug("OCR module imported successfully") #type: ignore
+except ImportError as e:
+    logger.error(f"Error importing OCR module: {e}") #type: ignore
+    process_document_dir = None # type: ignore
+
 logger.debug("file_processing module initialized") #type: ignore

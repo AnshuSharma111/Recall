@@ -84,3 +84,7 @@ CMakeLists.txt.user*
 # Local Files
 testing/
 docs/
+
+# Nested logs and databases
+*/*.log
+*/.initialized
