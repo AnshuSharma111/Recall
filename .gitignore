@@ -86,5 +86,5 @@ testing/
 docs/
 
 # Nested logs and databases
-*/*.log
-*/.initialized
+*/logs
+*/logs/*
