@@ -88,3 +88,20 @@ docs/
 # Nested logs and databases
 */logs
 */logs/*
+
+# decks
+decks/
+decks/*
+
+static/
+to_process/
+
+# env files
+.env
+**/.env
+.env.*
+**/.env.*
+!.env.example
+!**/.env.example
+./.env
+*/.env

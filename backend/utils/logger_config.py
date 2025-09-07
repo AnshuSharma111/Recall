@@ -23,9 +23,13 @@ def config_logger():
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(logging.DEBUG)
 
-        # Use an absolute path to the log file
+        # Use an absolute path to the log file in a dedicated logs directory
         backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        log_path = os.path.join(backend_dir, "recall.log")
+        logs_dir = os.path.join(backend_dir, "logs")
+        # Create logs directory if it doesn't exist
+        os.makedirs(logs_dir, exist_ok=True)
+        
+        log_path = os.path.join(logs_dir, "recall.log")
         file_handler = logging.FileHandler(log_path)
         file_handler.setLevel(logging.INFO)
 
