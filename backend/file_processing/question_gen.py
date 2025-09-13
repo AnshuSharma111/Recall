@@ -81,6 +81,13 @@ def generate_questions_from_json(json_file_path: str, res_dir: str = "./output/q
         # Create output directory if it doesn't exist
         ensure_dir(res_dir)
         
+        # Convert relative path to absolute if needed
+        if not os.path.isabs(json_file_path):
+            # Try to find the absolute path
+            abs_path = os.path.abspath(json_file_path)
+            logger.info(f"Converting relative path {json_file_path} to absolute: {abs_path}")
+            json_file_path = abs_path
+        
         # Check if input file exists
         if not os.path.exists(json_file_path):
             logger.error(f"Input JSON file not found: {json_file_path}")
@@ -115,10 +122,30 @@ def generate_questions_from_json(json_file_path: str, res_dir: str = "./output/q
                 content += formulae_content
                 logger.info(f"Added {len(doc_data['formulae'])} formulae to content")
                 
-            # Extract image paths
+            # Extract image paths - check for different key names used in JSON formats
+            images = []
             if "imgs" in doc_data and isinstance(doc_data["imgs"], list):
                 images = doc_data["imgs"]
-                logger.info(f"Found {len(images)} images in the document")
+                logger.info(f"Found {len(images)} images in the document from 'imgs' key")
+            elif "images" in doc_data and isinstance(doc_data["images"], list):
+                images = doc_data["images"]
+                logger.info(f"Found {len(images)} images in the document from 'images' key")
+            elif "input_path" in doc_data:
+                # This might be a single image OCR result
+                input_path = doc_data["input_path"]
+                if isinstance(input_path, str) and os.path.exists(input_path):
+                    images = [input_path]
+                    logger.info(f"Using input_path as image source: {input_path}")
+                elif isinstance(input_path, str):
+                    # Try to find the image using relative path
+                    base_dir = os.path.dirname(json_file_path)
+                    potential_img_path = os.path.join(base_dir, input_path)
+                    potential_img_path = potential_img_path.replace('\\\\', '\\')
+                    if os.path.exists(potential_img_path):
+                        images = [potential_img_path]
+                        logger.info(f"Found image using relative path: {potential_img_path}")
+                    else:
+                        logger.warning(f"Could not find image at path: {input_path}")
             
         if not content and not images:
             logger.warning(f"No content or images found in {json_file_path}")
@@ -127,11 +154,33 @@ def generate_questions_from_json(json_file_path: str, res_dir: str = "./output/q
         # Prepare image data if available
         image_data = []
         for i, img_path in enumerate(images):
-            logger.info(f"Processing image: {img_path}")
-            base64_image = encode_image(img_path)
+            # Normalize path separators to use OS-specific ones
+            normalized_path = os.path.normpath(img_path)
+            logger.info(f"Processing image: {normalized_path}")
+            
+            # Verify if the image exists at the given path
+            if not os.path.exists(normalized_path):
+                # Try to find the image using relative paths
+                base_dir = os.path.dirname(json_file_path)
+                potential_paths = [
+                    os.path.join(base_dir, os.path.basename(normalized_path)),  # Same dir as JSON
+                    os.path.join(base_dir, "images", os.path.basename(normalized_path)),  # images subdir
+                    os.path.join(os.path.dirname(base_dir), "images", os.path.basename(normalized_path)),  # parent/images
+                ]
+                
+                for potential_path in potential_paths:
+                    if os.path.exists(potential_path):
+                        normalized_path = potential_path
+                        logger.info(f"Found image at alternate path: {normalized_path}")
+                        break
+                else:
+                    logger.warning(f"Image not found: {normalized_path}")
+                    continue
+            
+            base64_image = encode_image(normalized_path)
             if base64_image:
                 image_data.append({
-                    "path": img_path,
+                    "path": normalized_path,
                     "base64": base64_image,
                     "index": i
                 })

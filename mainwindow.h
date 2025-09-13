@@ -17,11 +17,13 @@
 #include <QLabel>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QMessageBox>
 
 #include <QScreen>
 #include <QGuiApplication>
 
 #include "loadingscreen.h"
+#include "deckgridview.h"
 
 class MainWindow : public QMainWindow
 {
@@ -35,6 +37,7 @@ private:
     void checkHealth();
     void cleanupAndExit();
     void setupStartupScreen();
+    void setupMainUI();
     
     QProcess *process; // server process
     QNetworkAccessManager *networkManager; // to access API
@@ -44,6 +47,12 @@ private:
     LoadingScreen *startupScreen;
     LoadingScreen *shutdownScreen;
     QString animationPath;
+    
+    // Main UI components
+    DeckGridView *deckGridView;
+    
+private slots:
+    void onDeckSelected(const QString& deckId);
 };
 
 #endif // MAINWINDOW_H

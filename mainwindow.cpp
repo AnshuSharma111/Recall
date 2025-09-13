@@ -13,6 +13,9 @@
 #include <QDir>
 #include <QCoreApplication>
 #include <QFileInfo>
+#include <QMessageBox>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
@@ -135,8 +138,16 @@ void MainWindow::checkHealth() {
                     delete startupScreen;
                     startupScreen = nullptr;
                     
+                    // Set up the main UI with deck grid
+                    setupMainUI();
+                    
                     // Now show the main window
                     show();
+                    
+                    // Load the decks
+                    if (deckGridView) {
+                        deckGridView->loadDecks();
+                    }
                 }
             });
         } else {
@@ -240,6 +251,71 @@ void MainWindow::cleanupAndExit() {
     QTimer::singleShot(1000, []() {
         QApplication::quit();
     });
+}
+
+void MainWindow::setupMainUI() {
+    // Set window properties
+    setWindowTitle("Recall - Flashcard Study App");
+    resize(1024, 768);
+    
+    // Create central widget
+    QWidget *centralWidget = new QWidget(this);
+    setCentralWidget(centralWidget);
+    
+    // Create main layout
+    QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
+    
+    // Create header
+    QWidget *header = new QWidget(centralWidget);
+    QHBoxLayout *headerLayout = new QHBoxLayout(header);
+    
+    QLabel *titleLabel = new QLabel("Recall", header);
+    QFont titleFont = titleLabel->font();
+    titleFont.setPointSize(24);
+    titleFont.setBold(true);
+    titleLabel->setFont(titleFont);
+    
+    QLabel *subtitleLabel = new QLabel("Your Flashcard Collection", header);
+    QFont subtitleFont = subtitleLabel->font();
+    subtitleFont.setPointSize(14);
+    subtitleLabel->setFont(subtitleFont);
+    
+    headerLayout->addWidget(titleLabel);
+    headerLayout->addWidget(subtitleLabel);
+    headerLayout->addStretch();
+    
+    // Add header to main layout
+    mainLayout->addWidget(header);
+    
+    // Create deck grid view
+    deckGridView = new DeckGridView(centralWidget);
+    connect(deckGridView, &DeckGridView::deckSelected, this, &MainWindow::onDeckSelected);
+    
+    // Add deck grid to main layout
+    mainLayout->addWidget(deckGridView, 1); // Stretch factor of 1
+    
+    // Set layout for central widget
+    centralWidget->setLayout(mainLayout);
+    
+    // Apply stylesheet
+    setStyleSheet(
+        "QMainWindow {"
+        "   background-color: #F8F9FA;"
+        "}"
+        "QLabel#titleLabel {"
+        "   color: #4B89DC;"
+        "}"
+        "QLabel#subtitleLabel {"
+        "   color: #666666;"
+        "}"
+    );
+}
+
+void MainWindow::onDeckSelected(const QString& deckId) {
+    // For now, just show a message box with the selected deck ID
+    QMessageBox::information(this, "Deck Selected", 
+                            "You selected deck: " + deckId + "\n\n"
+                            "Deck revision functionality will be implemented in a future update.");
 }
 
 MainWindow::~MainWindow() {

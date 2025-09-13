@@ -106,10 +106,13 @@ async def lifespan(app: FastAPI):
     if logger is not None:
         logger.info("Application startup (via lifespan manager)...")
     
-    # Ensure necessary directories exist
-    upload_dir = './to_process'
-    decks_dir = './decks'
-    images_dir = './static/images'  # Permanent storage for images used in flashcards
+    # Get absolute base directory - one level up from backend
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
+    # Ensure necessary directories exist using absolute paths
+    upload_dir = os.path.join(base_dir, 'to_process')
+    decks_dir = os.path.join(base_dir, 'decks')
+    images_dir = os.path.join(base_dir, 'static', 'images')  # Permanent storage for images used in flashcards
 
     # Use our utility function for directory creation
     ensure_dir(upload_dir)
@@ -149,6 +152,11 @@ you automatically using AI"
     title="Recall",
     lifespan=lifespan
 )
+
+# Mount static files directory with absolute path
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+static_dir = os.path.join(base_dir, "static")
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 @app.get('/')
 def health_check():
@@ -282,7 +290,8 @@ async def create_deck(deck_title: str, files: List[UploadFile] = File(...)):
 
     # Save files for processing
     try:
-        upload_dir = './to_process'
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        upload_dir = os.path.join(base_dir, 'to_process')
         # Use our utility function to ensure directory exists
         ensure_dir(upload_dir)
         saved_files = []
@@ -317,8 +326,9 @@ async def create_deck(deck_title: str, files: List[UploadFile] = File(...)):
                 logger.info(f"Converting PDF to images: {file}")
             # we know pdf_to_img is a callable function here
             if pdf_to_img:
+                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                 # Each PDF will be saved to its own subfolder within ./to_process/
-                pdf_to_img(file, './to_process')
+                pdf_to_img(file, os.path.join(base_dir, 'to_process'))
             else:
                 # This shouldn't happen because of the earlier check, but just to be safe
                 if logger is not None:
@@ -335,7 +345,8 @@ async def create_deck(deck_title: str, files: List[UploadFile] = File(...)):
             # For image files, follow the same structure as PDFs - create a folder per image
             img_basename = os.path.basename(file)
             img_name = os.path.splitext(img_basename)[0]
-            img_output_dir = os.path.join('./to_process', img_name, 'images')
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            img_output_dir = os.path.join(base_dir, 'to_process', img_name, 'images')
             # Use our utility function to ensure directory exists
             ensure_dir(img_output_dir)
             
@@ -375,7 +386,8 @@ async def create_deck(deck_title: str, files: List[UploadFile] = File(...)):
             await send_ws("Processing images with PaddleOCR for layout detection")
             
             # Log what's in the to_process directory
-            to_process_dir = './to_process'
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            to_process_dir = os.path.join(base_dir, 'to_process')
             if os.path.exists(to_process_dir):
                 doc_dirs = [d for d in os.listdir(to_process_dir) 
                           if os.path.isdir(os.path.join(to_process_dir, d))]
@@ -395,7 +407,8 @@ async def create_deck(deck_title: str, files: List[UploadFile] = File(...)):
                     logger.warning(f"Directory {to_process_dir} does not exist!")
             
             # Process all documents in the to_process directory
-            chunk_files('./to_process')
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            chunk_files(os.path.join(base_dir, 'to_process'))
             await send_ws("Layout detection complete")
             if logger is not None:
                 logger.info("Image chunking completed successfully")
@@ -407,7 +420,8 @@ async def create_deck(deck_title: str, files: List[UploadFile] = File(...)):
                 await send_ws("Extracting text and formulas from detected elements")
                 try:
                     # Process the chunks with OCR
-                    process_document_dir('./to_process')
+                    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                    process_document_dir(os.path.join(base_dir, 'to_process'))
                     await send_ws("OCR processing complete")
                     if logger is not None:
                         logger.info("OCR processing completed successfully")
@@ -420,7 +434,8 @@ async def create_deck(deck_title: str, files: List[UploadFile] = File(...)):
                         try:
                             # Pass the deck title to the question generation function
                             # Make sure to use the user-provided deck title
-                            question_results = process_document_questions('./to_process', deck_name=deck_title)
+                            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                            question_results = process_document_questions(os.path.join(base_dir, 'to_process'), deck_name=deck_title)
                             
                             # Check if we have unified deck info
                             if "unified_deck" in question_results:
@@ -445,7 +460,8 @@ async def create_deck(deck_title: str, files: List[UploadFile] = File(...)):
                                 deck_id = question_results.get("unified_deck", {}).get("deck_id")
                                 
                                 # Pass the deck_id to organize images by deck
-                                cleanup_result = cleanup_processing_dir('./to_process', ["questions", "images"], deck_id=deck_id)
+                                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                                cleanup_result = cleanup_processing_dir(os.path.join(base_dir, 'to_process'), ["questions", "images"], deck_id=deck_id)
                                 
                                 if cleanup_result and logger is not None:
                                     if deck_id:
@@ -536,7 +552,8 @@ async def get_deck(deck_id: str):
         logger.info(f"GET /api/deck/{deck_id} called.")
     
     # Look for the deck file in the decks directory
-    deck_path = f"./decks/{deck_id}.json"
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    deck_path = os.path.join(base_dir, "decks", f"{deck_id}.json")
     
     if not os.path.exists(deck_path):
         if logger is not None:
@@ -591,7 +608,8 @@ async def get_image(image_name: str):
     # Look for the image in the static images directory
     # This endpoint allows backward compatibility for older deck files that
     # might have direct image paths stored
-    img_path = f"./static/images/{image_name}"
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    img_path = os.path.join(base_dir, "static", "images", image_name)
     
     if not os.path.exists(img_path):
         if logger is not None:
@@ -608,6 +626,121 @@ async def get_image(image_name: str):
     # Return the image file path
     # The StaticFiles mount at /static will serve the actual image
     return {"image_url": f"/static/images/{image_name}"}
+
+@app.get('/api/decks', dependencies=[Depends(api_key_auth)])
+async def get_all_decks():
+    '''
+    Retrieves metadata for all available flashcard decks
+    '''
+    if logger is not None:
+        logger.info("GET /api/decks called - retrieving all deck metadata.")
+    
+    # Use absolute path for decks directory to ensure consistency regardless of working directory
+    decks_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "decks")
+    
+    # Check if decks directory exists
+    if not os.path.exists(decks_dir):
+        if logger is not None:
+            logger.warning("Decks directory does not exist.")
+        # Return empty list instead of error to handle case of no decks yet
+        return {"decks": []}
+    
+    try:
+        # Get all JSON files in the decks directory
+        deck_files = [f for f in os.listdir(decks_dir) if f.endswith('.json')]
+        
+        if logger is not None:
+            logger.info(f"Found {len(deck_files)} deck files.")
+        
+        all_decks = []
+        for deck_file in deck_files:
+            deck_path = os.path.join(decks_dir, deck_file)
+            try:
+                # More efficiently read just the metadata section instead of the full deck
+                # This is especially important for large decks with many questions
+                with open(deck_path, 'r', encoding='utf-8') as f:
+                    # Attempt to read just the first part of the file to extract metadata
+                    # Most JSON libraries don't support partial reading, so we'll read a fixed chunk
+                    file_start = f.read(8192)  # Read first 8KB which should contain metadata
+                    
+                    # Find the metadata section in the partial JSON
+                    metadata_start = file_start.find('"metadata"')
+                    if metadata_start > 0:
+                        # Try to find the end of the metadata section
+                        # This is a bit hacky but avoids parsing the entire file
+                        bracket_level = 0
+                        in_metadata = False
+                        metadata_json = ""
+                        
+                        for i in range(metadata_start, len(file_start)):
+                            char = file_start[i]
+                            
+                            if char == '{':
+                                bracket_level += 1
+                                if not in_metadata and bracket_level == 1:
+                                    in_metadata = True
+                            elif char == '}':
+                                bracket_level -= 1
+                                if in_metadata and bracket_level == 0:
+                                    metadata_json += '}'
+                                    break
+                            
+                            if in_metadata:
+                                metadata_json += char
+                        
+                        # If we couldn't extract metadata this way, fallback to full file read
+                        if not metadata_json or bracket_level != 0:
+                            f.seek(0)  # Reset file pointer to beginning
+                            deck_data = json.load(f)
+                            metadata_obj = deck_data.get("metadata", {})
+                        else:
+                            try:
+                                # Try to parse the extracted metadata JSON
+                                metadata_obj = json.loads("{" + metadata_json)
+                            except json.JSONDecodeError:
+                                # Fallback to reading the whole file if parsing fails
+                                f.seek(0)  # Reset file pointer to beginning
+                                deck_data = json.load(f)
+                                metadata_obj = deck_data.get("metadata", {})
+                    else:
+                        # If we can't find metadata section in the first chunk, read the whole file
+                        f.seek(0)  # Reset file pointer to beginning
+                        deck_data = json.load(f)
+                        metadata_obj = deck_data.get("metadata", {})
+                
+                # Extract deck_id from filename
+                deck_id = os.path.splitext(deck_file)[0]  # Remove .json extension
+                
+                # Build metadata object with defaults for missing fields
+                metadata = {
+                    "deck_id": deck_id,
+                    "title": metadata_obj.get("deck_name", "Untitled Deck"),  # Map from deck_name to title
+                    "question_count": metadata_obj.get("question_count", 0),
+                    "created_at": metadata_obj.get("created_at", ""),
+                    "last_modified": metadata_obj.get("updated_at", "")  # Map from updated_at to last_modified
+                }
+                all_decks.append(metadata)
+            except Exception as e:
+                if logger is not None:
+                    logger.warning(f"Error reading deck file {deck_file}: {str(e)}")
+                # Skip problematic files rather than failing the entire request
+        
+        # Sort by creation date, newest first
+        all_decks.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        
+        return {"decks": all_decks}
+        
+    except Exception as e:
+        if logger is not None:
+            logger.error(f"Error retrieving deck metadata: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": 40,
+                "message": "Error retrieving deck metadata",
+                "source": str(e)
+            }
+        )
 
 async def main():
     """

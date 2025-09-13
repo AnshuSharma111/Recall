@@ -21,6 +21,12 @@ set(PROJECT_SOURCES
         mainwindow.h
         loadingscreen.cpp
         loadingscreen.h
+        deckloader.cpp
+        deckloader.h
+        deckcard.cpp
+        deckcard.h
+        deckgridview.cpp
+        deckgridview.h
 )
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
