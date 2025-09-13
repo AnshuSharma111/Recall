@@ -9,7 +9,7 @@ from typing import List, Callable, Dict, Any, Optional, Union
 
 from dotenv import load_dotenv
 import uvicorn
-from fastapi import File, UploadFile, FastAPI, Depends, HTTPException, status, Header, WebSocket
+from fastapi import File, Form, UploadFile, FastAPI, Depends, HTTPException, status, Header, WebSocket
 from fastapi.staticfiles import StaticFiles
 from utils.file_operations import ensure_dir, cleanup_processing_dir, copy_file, merge_json_files, manage_flashcards, safe_move_images
 
@@ -227,7 +227,7 @@ def api_key_auth(x_api_key: str = Header(..., alias="X-API-Key")):
     return {"API Key": x_api_key}
 
 @app.post('/api/create_deck', dependencies=[Depends(api_key_auth)])
-async def create_deck(deck_title: str, files: List[UploadFile] = File(...)):
+async def create_deck(deck_title: str = Form(...), files: List[UploadFile] = File(...)):
     '''
     Accepts one or more PDF/image files as input, starts a background job, returns job_id
     

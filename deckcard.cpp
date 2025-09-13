@@ -28,20 +28,20 @@ DeckCard::DeckCard(const DeckMetadata& deck, QWidget *parent)
     QDateTime dateTime = QDateTime::fromString(deck.createdAt, Qt::ISODate);
     dateLabel->setText(dateTime.toString("MMM d, yyyy"));
     
-    // Set stylesheet for the card
+    // Set stylesheet for the card - dark theme with modern look
     setStyleSheet(
         "QWidget#deckCard {"
-        "   background-color: #FFFFFF;"
-        "   border-radius: 8px;"
-        "   border: 1px solid #E0E0E0;"
+        "   background-color: #1F1F1F;"
+        "   border-radius: 12px;"
+        "   border: 1px solid #333333;"
         "}"
         "QLabel#titleLabel {"
         "   font-weight: bold;"
-        "   color: #333333;"
+        "   color: #BB86FC;"
         "   font-size: 16px;"
         "}"
         "QLabel#countLabel {"
-        "   color: #666666;"
+        "   color: #CCCCCC;"
         "   font-size: 14px;"
         "}"
         "QLabel#dateLabel {"
@@ -94,24 +94,24 @@ void DeckCard::mousePressEvent(QMouseEvent *event)
 
 void DeckCard::enterEvent(QEnterEvent *event)
 {
-    // Apply hover effect
+    // Apply hover effect - more vibrant with modern look
     setStyleSheet(
         "QWidget#deckCard {"
-        "   background-color: #F5F8FF;"
-        "   border-radius: 8px;"
-        "   border: 1px solid #4B89DC;"
+        "   background-color: #2D2D2D;"
+        "   border-radius: 12px;"
+        "   border: 1px solid #BB86FC;"
         "}"
         "QLabel#titleLabel {"
         "   font-weight: bold;"
-        "   color: #4B89DC;"
+        "   color: #BB86FC;"
         "   font-size: 16px;"
         "}"
         "QLabel#countLabel {"
-        "   color: #666666;"
+        "   color: #FFFFFF;"
         "   font-size: 14px;"
         "}"
         "QLabel#dateLabel {"
-        "   color: #999999;"
+        "   color: #BBBBBB;"
         "   font-size: 12px;"
         "}"
     );
@@ -121,20 +121,20 @@ void DeckCard::enterEvent(QEnterEvent *event)
 
 void DeckCard::leaveEvent(QEvent *event)
 {
-    // Restore normal style
+    // Restore normal style - dark theme
     setStyleSheet(
         "QWidget#deckCard {"
-        "   background-color: #FFFFFF;"
-        "   border-radius: 8px;"
-        "   border: 1px solid #E0E0E0;"
+        "   background-color: #1F1F1F;"
+        "   border-radius: 12px;"
+        "   border: 1px solid #333333;"
         "}"
         "QLabel#titleLabel {"
         "   font-weight: bold;"
-        "   color: #333333;"
+        "   color: #BB86FC;"
         "   font-size: 16px;"
         "}"
         "QLabel#countLabel {"
-        "   color: #666666;"
+        "   color: #CCCCCC;"
         "   font-size: 14px;"
         "}"
         "QLabel#dateLabel {"

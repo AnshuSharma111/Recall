@@ -2,6 +2,7 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QVBoxLayout>
+#include <QScrollBar>
 
 DeckGridView::DeckGridView(QWidget *parent) : QWidget(parent)
 {
@@ -9,14 +10,32 @@ DeckGridView::DeckGridView(QWidget *parent) : QWidget(parent)
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(0, 0, 0, 0);
     
-    // Create scroll area
+    // Create scroll area with dark theme
     scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
     scrollArea->setFrameShape(QFrame::NoFrame);
     scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scrollArea->setStyleSheet("QScrollArea { background-color: #121212; border: none; }");
+    scrollArea->verticalScrollBar()->setStyleSheet(
+        "QScrollBar:vertical {"
+        "   border: none;"
+        "   background-color: #222222;"
+        "   width: 10px;"
+        "   margin: 0px 0px 0px 0px;"
+        "}"
+        "QScrollBar::handle:vertical {"
+        "   background-color: #BB86FC;"
+        "   min-height: 30px;"
+        "   border-radius: 5px;"
+        "}"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {"
+        "   height: 0px;"
+        "}"
+    );
     
-    // Create container for grid
+    // Create container for grid with dark theme
     gridContainer = new QWidget();
+    gridContainer->setStyleSheet("background-color: #121212;");
     
     // Create grid layout with 3 columns
     gridLayout = new QGridLayout(gridContainer);
@@ -40,9 +59,10 @@ void DeckGridView::loadDecks()
     // Clear existing grid
     clearGrid();
     
-    // Add loading indicator
+    // Add loading indicator with modern styling
     QLabel *loadingLabel = new QLabel("Loading decks...", gridContainer);
     loadingLabel->setAlignment(Qt::AlignCenter);
+    loadingLabel->setStyleSheet("color: #BB86FC; font-size: 16px; margin: 40px;");
     gridLayout->addWidget(loadingLabel, 0, 0, 1, 3);
     
     // Load decks
@@ -55,9 +75,10 @@ void DeckGridView::onDecksLoaded(const QVector<DeckMetadata>& decks)
     clearGrid();
     
     if (decks.isEmpty()) {
-        // Show no decks message
+        // Show no decks message with modern styling
         QLabel *noDecksLabel = new QLabel("No decks available. Create your first deck to get started!", gridContainer);
         noDecksLabel->setAlignment(Qt::AlignCenter);
+        noDecksLabel->setStyleSheet("color: #BB86FC; font-size: 16px; margin: 40px;");
         gridLayout->addWidget(noDecksLabel, 0, 0, 1, 3);
         return;
     }
@@ -88,7 +109,7 @@ void DeckGridView::onLoadError(const QString& errorMessage)
     
     QLabel *errorLabel = new QLabel("Error loading decks: " + errorMessage, gridContainer);
     errorLabel->setAlignment(Qt::AlignCenter);
-    errorLabel->setStyleSheet("color: red;");
+    errorLabel->setStyleSheet("color: #CF6679; font-size: 16px; margin: 40px;");
     gridLayout->addWidget(errorLabel, 0, 0, 1, 3);
 }
 

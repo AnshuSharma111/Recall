@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "createdeckdialog.h"
 
 #include <QProcess>
 #include <QTimer>
@@ -16,6 +17,9 @@
 #include <QMessageBox>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QPushButton>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
@@ -265,24 +269,38 @@ void MainWindow::setupMainUI() {
     // Create main layout
     QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
     
-    // Create header
+    // Create header with modern design
     QWidget *header = new QWidget(centralWidget);
     QHBoxLayout *headerLayout = new QHBoxLayout(header);
     
     QLabel *titleLabel = new QLabel("Recall", header);
+    titleLabel->setObjectName("titleLabel");
     QFont titleFont = titleLabel->font();
-    titleFont.setPointSize(24);
+    titleFont.setPointSize(28);
     titleFont.setBold(true);
     titleLabel->setFont(titleFont);
     
     QLabel *subtitleLabel = new QLabel("Your Flashcard Collection", header);
+    subtitleLabel->setObjectName("subtitleLabel");
     QFont subtitleFont = subtitleLabel->font();
     subtitleFont.setPointSize(14);
     subtitleLabel->setFont(subtitleFont);
     
+    // Add a divider between the title and subtitle
+    QFrame *divider = new QFrame(header);
+    divider->setFrameShape(QFrame::VLine);
+    divider->setFrameShadow(QFrame::Sunken);
+    divider->setStyleSheet("background-color: #BB86FC; margin: 0px 10px;");
+    divider->setMaximumWidth(2);
+    divider->setMinimumHeight(30);
+    
     headerLayout->addWidget(titleLabel);
+    headerLayout->addWidget(divider);
     headerLayout->addWidget(subtitleLabel);
     headerLayout->addStretch();
+    
+    // Add some padding to the header
+    headerLayout->setContentsMargins(20, 20, 20, 20);
     
     // Add header to main layout
     mainLayout->addWidget(header);
@@ -294,19 +312,62 @@ void MainWindow::setupMainUI() {
     // Add deck grid to main layout
     mainLayout->addWidget(deckGridView, 1); // Stretch factor of 1
     
+    // Create a container for the buttons
+    QWidget *buttonContainer = new QWidget(centralWidget);
+    QHBoxLayout *buttonLayout = new QHBoxLayout(buttonContainer);
+    
+    // Create Deck button
+    QPushButton *createDeckButton = new QPushButton("Create Deck", buttonContainer);
+    createDeckButton->setObjectName("createDeckButton");
+    createDeckButton->setMinimumSize(150, 40);
+    connect(createDeckButton, &QPushButton::clicked, this, &MainWindow::onCreateDeckClicked);
+    
+    // Settings button
+    QPushButton *settingsButton = new QPushButton("Settings", buttonContainer);
+    settingsButton->setObjectName("settingsButton");
+    settingsButton->setMinimumSize(150, 40);
+    connect(settingsButton, &QPushButton::clicked, this, &MainWindow::onSettingsClicked);
+    
+    // Add buttons to button layout
+    buttonLayout->addWidget(createDeckButton);
+    buttonLayout->addStretch();
+    buttonLayout->addWidget(settingsButton);
+    buttonLayout->setContentsMargins(20, 10, 20, 20);
+    
+    // Add button container to main layout
+    mainLayout->addWidget(buttonContainer);
+    
     // Set layout for central widget
     centralWidget->setLayout(mainLayout);
     
-    // Apply stylesheet
+    // Apply modern dark stylesheet
     setStyleSheet(
         "QMainWindow {"
-        "   background-color: #F8F9FA;"
+        "   background-color: #121212;"
+        "}"
+        "QWidget {"
+        "   background-color: #121212;"
+        "   color: #FFFFFF;"
         "}"
         "QLabel#titleLabel {"
-        "   color: #4B89DC;"
+        "   color: #BB86FC;"
         "}"
         "QLabel#subtitleLabel {"
-        "   color: #666666;"
+        "   color: #CCCCCC;"
+        "}"
+        "QPushButton {"
+        "   background-color: #BB86FC;"
+        "   color: #121212;"
+        "   border: none;"
+        "   border-radius: 4px;"
+        "   padding: 8px 16px;"
+        "   font-weight: bold;"
+        "}"
+        "QPushButton:hover {"
+        "   background-color: #9969DA;"
+        "}"
+        "QPushButton:pressed {"
+        "   background-color: #7F39FB;"
         "}"
     );
 }
@@ -316,6 +377,22 @@ void MainWindow::onDeckSelected(const QString& deckId) {
     QMessageBox::information(this, "Deck Selected", 
                             "You selected deck: " + deckId + "\n\n"
                             "Deck revision functionality will be implemented in a future update.");
+}
+
+void MainWindow::onCreateDeckClicked() {
+    CreateDeckDialog dialog(this);
+    
+    if (dialog.exec() == QDialog::Accepted) {
+        // Refresh the deck grid to show the new deck
+        if (deckGridView) {
+            deckGridView->loadDecks();
+        }
+    }
+}
+
+void MainWindow::onSettingsClicked() {
+    QMessageBox::information(this, "Settings", 
+                           "Settings functionality will be implemented in a future update.");
 }
 
 MainWindow::~MainWindow() {

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RCC>
+  <qresource prefix="/">
+    <file>icons/pdf.png</file>
+    <file>icons/image.png</file>
+  </qresource>
+</RCC>

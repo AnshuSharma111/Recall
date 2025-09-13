@@ -27,12 +27,16 @@ set(PROJECT_SOURCES
         deckcard.h
         deckgridview.cpp
         deckgridview.h
+        createdeckdialog.cpp
+        createdeckdialog.h
+        resources.qrc
 )
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
     qt_add_executable(Recall
         MANUAL_FINALIZATION
         ${PROJECT_SOURCES}
+        resources.qrc
     )
 # Define target properties for Android with Qt 6 as:
 #    set_property(TARGET Recall APPEND PROPERTY QT_ANDROID_PACKAGE_SOURCE_DIR
@@ -48,6 +52,7 @@ else()
     else()
         add_executable(Recall
             ${PROJECT_SOURCES}
+            resources.qrc
         )
     endif()
 endif()

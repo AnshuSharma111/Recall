@@ -33,6 +33,11 @@ public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
+private slots:
+    void onDeckSelected(const QString& deckId);
+    void onCreateDeckClicked();
+    void onSettingsClicked();
+
 private:
     void checkHealth();
     void cleanupAndExit();
@@ -50,9 +55,6 @@ private:
     
     // Main UI components
     DeckGridView *deckGridView;
-    
-private slots:
-    void onDeckSelected(const QString& deckId);
 };
 
 #endif // MAINWINDOW_H
