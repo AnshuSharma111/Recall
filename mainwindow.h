@@ -1,14 +1,49 @@
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
+#include <QApplication>
 #include <QMainWindow>
+#include <QProcess>
+#include <QDebug>
+
+#include <QTimer>
+#include <QNetworkAccessManager>
+#include <QNetworkRequest>
+#include <QNetworkReply>
+
+#include <QDialog>
+#include <QMovie>
+
+#include <QLabel>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+
+#include <QScreen>
+#include <QGuiApplication>
+
+#include "loadingscreen.h"
 
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
 
 public:
-    MainWindow(QWidget *parent = nullptr);
+    explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
+
+private:
+    void checkHealth();
+    void cleanupAndExit();
+    void setupStartupScreen();
+    
+    QProcess *process; // server process
+    QNetworkAccessManager *networkManager; // to access API
+    QTimer *healthCheckTimer;
+    int retryCount;
+    const int maxRetries = 30;
+    LoadingScreen *startupScreen;
+    LoadingScreen *shutdownScreen;
+    QString animationPath;
 };
+
 #endif // MAINWINDOW_H

@@ -105,3 +105,6 @@ to_process/
 !**/.env.example
 ./.env
 */.env
+
+*/Instructions.MD
+Instructions.MD
