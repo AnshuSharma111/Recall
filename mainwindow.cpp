@@ -1,4 +1,4 @@
-#include "MainWindow.h"
+#include "mainwindow.h"
 #include "createdeckdialog.h"
 
 #include <QProcess>
@@ -20,21 +20,53 @@
 #include <QPushButton>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QThread>
+#include <QMutexLocker>
+#include <QStandardPaths>
+#include <QFrame>
+#include <QDateTime>
+
+// ============================================================================
+// MainWindow Implementation
+// ============================================================================
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
-    process(new QProcess(this)),
-    networkManager(new QNetworkAccessManager(this)),
-    healthCheckTimer(new QTimer(this)),
-    retryCount(0),
+    serverManager(nullptr),
+    resourceCache(nullptr),
+    performanceMonitor(nullptr),
+    deckGridView(nullptr),
     startupScreen(nullptr),
-    shutdownScreen(nullptr)
+    shutdownScreen(nullptr),
+    performanceTimer(new QTimer(this)),
+    imageCache(50), // Cache up to 50 images
+    resourcesPreloaded(false),
+    performanceMonitoringEnabled(true)
 {
-    // Use absolute path to ensure we can find the animation files
-    QString appDirPath = QCoreApplication::applicationDirPath();
+    // Initialize optimization components
+    serverManager = new ServerManager(this);
+    resourceCache = new ResourceCache(this);
+    performanceMonitor = new PerformanceMonitor(this);
     
-    // Find common directory for animations
-    QString animationsDir = "";
+    // Connect server manager signals
+    connect(serverManager, &ServerManager::serverReady, this, &MainWindow::onServerReady);
+    connect(serverManager, &ServerManager::serverError, this, &MainWindow::onServerError);
+    
+    // Connect performance monitor
+    connect(performanceMonitor, &PerformanceMonitor::performanceUpdate, 
+            this, &MainWindow::onPerformanceUpdate);
+    
+    // Setup performance monitoring
+    initializePerformanceMonitoring();
+    
+    // Preload resources in background
+    QTimer::singleShot(0, this, &MainWindow::preloadResources);
+    
+    // Setup startup screen
+    startupScreen = new LoadingScreen(LoadingScreen::Startup);
+    
+    // Set animation path immediately
+    QString appDirPath = QCoreApplication::applicationDirPath();
     QStringList possibleDirs;
     possibleDirs << appDirPath + "/../../../static/images/"
                 << "static/images/"
@@ -42,258 +74,93 @@ MainWindow::MainWindow(QWidget *parent)
                 << "../../static/images/"
                 << appDirPath + "/static/images/";
     
-    // Try to find the directory that contains our animations
     for (const QString &dir : possibleDirs) {
         QFileInfo loadingCheck(dir + "loading.gif");
-        QFileInfo shutdownCheck(dir + "shutdown.gif");
-        
         if (loadingCheck.exists()) {
-            animationsDir = dir;
-            qDebug() << "Found animations directory:" << animationsDir;
+            animationPath = dir + "loading.gif";
+            startupScreen->setAnimationPath(animationPath);
+            qDebug() << "Set startup animation path:" << animationPath;
             break;
         }
-    }
-    
-    if (animationsDir.isEmpty()) {
-        qDebug() << "Could not find animations directory. Defaulting to static/images/";
-        animationsDir = "static/images/";
-    }
-    
-    // Set the path to loading.gif
-    animationPath = animationsDir + "loading.gif";
-    qDebug() << "Animation path set to:" << animationPath;
-    
-    // Check if shutdown.gif exists in the same directory
-    QFileInfo shutdownFileInfo(animationsDir + "shutdown.gif");
-    if (shutdownFileInfo.exists()) {
-        qDebug() << "Shutdown animation found at:" << animationsDir + "shutdown.gif";
-    } else {
-        qDebug() << "Shutdown animation not found, will use loading.gif for shutdown screen too";
-    }
-    
-    // Setup startup screen before launching the server
-    setupStartupScreen();
-    
-    // Start the server process
-    QString pythonPath = "python";
-    // Find the server.py script with more robust path handling
-    QString scriptPath = "";
-    QStringList possibleScriptPaths = {
-        "backend/server.py",                    // From app root
-        "../backend/server.py",                 // From build dir
-        "../../backend/server.py",              // From deeper build dir
-        appDirPath + "/backend/server.py",      // From executable dir
-        appDirPath + "/../backend/server.py"    // From executable dir up one level
-    };
-    
-    for (const QString &path : possibleScriptPaths) {
-        QFileInfo scriptCheck(path);
-        if (scriptCheck.exists() && scriptCheck.isFile()) {
-            scriptPath = scriptCheck.absoluteFilePath();
-            qDebug() << "Found server script at:" << scriptPath;
-            break;
-        }
-    }
-    
-    if (scriptPath.isEmpty()) {
-        qDebug() << "Could not find server.py script. Defaulting to ../../backend/server.py";
-        scriptPath = "../../backend/server.py";
-    }
-
-    // Set the working directory to the project root (parent of build directory)
-    // This ensures the Python server runs from the correct location
-    QString workingDir = QDir::current().absolutePath();
-    if (workingDir.contains("build")) {
-        // We're running from build directory, go up to project root
-        QDir buildDir(workingDir);
-        buildDir.cdUp(); // Go up one level from build/Desktop_Qt_6_9_0_MinGW_64_bit-Debug
-        buildDir.cdUp(); // Go up one more level to project root
-        workingDir = buildDir.absolutePath();
-        qDebug() << "Setting Python server working directory to project root:" << workingDir;
-    }
-    
-    process->setWorkingDirectory(workingDir);
-    process->start(pythonPath, QStringList() << scriptPath);
-
-    if (!process->waitForStarted(5000)) {
-        qDebug() << "Failed to start server process.";
-        if (startupScreen) {
-            startupScreen->showErrorMessage("Failed to start server process");
-            QTimer::singleShot(3000, this, &MainWindow::cleanupAndExit);
-        } else {
-            QApplication::quit();
-        }
-        return;
-    }
-
-    qDebug() << "Python server process started.";
-    
-    // Start phrase rotation for server startup
-    if (startupScreen) {
-        startupScreen->startPhraseRotation();
-    }
-
-    // Setup health check timer
-    connect(healthCheckTimer, &QTimer::timeout, this, &MainWindow::checkHealth);
-    healthCheckTimer->start(10000); // Check every 10 seconds as in original code
-}
-
-void MainWindow::setupStartupScreen() {
-    startupScreen = new LoadingScreen(LoadingScreen::Startup);
-    
-    // Set animation if the file exists
-    QFileInfo animationFile(animationPath);
-    if (animationFile.exists() && animationFile.isFile()) {
-        qDebug() << "Loading animation from:" << animationPath;
-        startupScreen->setAnimationPath(animationPath);
-    } else {
-        qDebug() << "Animation file not found at final path:" << animationPath;
     }
     
     startupScreen->show();
-    QApplication::processEvents(); // Make sure the UI updates
+    
+    // Start server
+    serverManager->startServer();
 }
 
-// This method has been replaced with countdown functionality
-
-void MainWindow::checkHealth() {
-    QNetworkRequest request(QUrl("http://127.0.0.1:8000/"));
-    QNetworkReply *reply = networkManager->get(request);
-
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-        if (reply->error() == QNetworkReply::NoError) {
-            qDebug() << "Server is up!";
-            healthCheckTimer->stop();
+MainWindow::~MainWindow()
+{
+    qDebug() << "MainWindow destructor called - starting cleanup";
+    
+    // Show shutdown screen
+    if (!shutdownScreen) {
+        shutdownScreen = new LoadingScreen(LoadingScreen::Shutdown);
+        
+        // Set shutdown animation if available
+        if (!animationPath.isEmpty()) {
+            QString shutdownAnimPath = animationPath;
+            shutdownAnimPath.replace("loading.gif", "shutdown.gif");
             
-            // Server is up, stop phrase rotation and close the startup screen
-            if (startupScreen) {
-                startupScreen->stopPhraseRotation();
-            }
-            
-            // Wait a moment to show the 100% progress, then close the startup screen
-            QTimer::singleShot(500, this, [this]() {
-                if (startupScreen) {
-                    startupScreen->accept();
-                    delete startupScreen;
-                    startupScreen = nullptr;
-                    
-                    // Set up the main UI with deck grid
-                    setupMainUI();
-                    
-                    // Now show the main window
-                    show();
-                    
-                    // Load the decks
-                    if (deckGridView) {
-                        deckGridView->loadDecks();
-                    }
-                }
-            });
-        } else {
-            retryCount++;
-            qDebug() << "Health check failed. Attempt" << retryCount;
-            
-            // No need to update progress as we're using countdown timer now
-
-            if (retryCount >= maxRetries) {
-                qDebug() << "Server failed to start in time. Shutting down.";
-                if (startupScreen) {
-                    startupScreen->showErrorMessage("Server failed to start in time");
-                    QTimer::singleShot(3000, this, &MainWindow::cleanupAndExit);
-                } else {
-                    cleanupAndExit();
-                }
+            if (QFileInfo(shutdownAnimPath).exists()) {
+                shutdownScreen->setAnimationPath(shutdownAnimPath);
+            } else {
+                shutdownScreen->setAnimationPath(animationPath);
             }
         }
-        reply->deleteLater();
-    });
-}
-
-void MainWindow::cleanupAndExit() {
-    // If the startup screen is still showing, close it
-    if (startupScreen) {
-        startupScreen->accept();
-        delete startupScreen;
-        startupScreen = nullptr;
+        
+        shutdownScreen->show();
+        shutdownScreen->startPhraseRotation();
+        QApplication::processEvents();
     }
     
-    // Create and show the shutdown loading screen
-    shutdownScreen = new LoadingScreen(LoadingScreen::Shutdown, this);
-    
-    // Try to find a shutdown-specific animation first
-    QString shutdownAnimPath = animationPath;
-    shutdownAnimPath.replace("loading.gif", "shutdown.gif");
-    
-    QFileInfo shutdownAnimFile(shutdownAnimPath);
-    if (shutdownAnimFile.exists() && shutdownAnimFile.isFile()) {
-        qDebug() << "Loading shutdown animation from:" << shutdownAnimPath;
-        shutdownScreen->setAnimationPath(shutdownAnimPath);
-    } else {
-        // Fall back to the original animation if shutdown-specific one doesn't exist
-        QFileInfo animationFile(animationPath);
-        if (animationFile.exists() && animationFile.isFile()) {
-            qDebug() << "Loading fallback animation from:" << animationPath;
-            shutdownScreen->setAnimationPath(animationPath);
-        } else {
-            qDebug() << "No animation files found. Tried: " << shutdownAnimPath << " and " << animationPath;
-        }
+    // Stop performance monitoring
+    if (performanceMonitor) {
+        performanceMonitor->stopMonitoring();
+        qDebug() << "Performance monitoring stopped";
     }
     
-    shutdownScreen->show();
-    QApplication::processEvents(); // Make sure the UI updates
+    // Stop server gracefully
+    if (serverManager) {
+        qDebug() << "Stopping server...";
+        serverManager->stopServer();
+        
+        // Wait a bit for graceful shutdown
+        QEventLoop loop;
+        QTimer::singleShot(3000, &loop, &QEventLoop::quit);
+        loop.exec();
+        
+        qDebug() << "Server stopped";
+    }
     
-    // Start phrase rotation for shutdown
-    shutdownScreen->startPhraseRotation();
+    // Clear caches
+    if (resourceCache) {
+        resourceCache->clearAllCaches();
+        qDebug() << "Caches cleared";
+    }
     
-    // Use a nested event loop while waiting
-    QEventLoop loop;
-
-    if (process) {
-        // We're about to terminate the server
+    // Stop shutdown screen phrase rotation
+    if (shutdownScreen) {
+        shutdownScreen->stopPhraseRotation();
         QApplication::processEvents();
         
-        process->terminate();
-
-        // Connect process finished signal to quit the nested event loop
-        connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-                &loop, &QEventLoop::quit);
-
-        // Start a timer in case it hangs
-        QTimer timeoutTimer;
-        timeoutTimer.setSingleShot(true);
-        connect(&timeoutTimer, &QTimer::timeout, [this, &loop]() {
-            shutdownScreen->showErrorMessage("Server shutdown is taking longer than expected");
-            QApplication::processEvents();
-            loop.quit();
+        // Wait a moment before closing
+        QTimer::singleShot(1000, [this]() {
+            if (shutdownScreen) {
+                shutdownScreen->accept();
+                shutdownScreen->deleteLater();
+                shutdownScreen = nullptr;
+            }
         });
-        timeoutTimer.start(40000); // 40 seconds timeout as in original code
-        
-        // We're waiting for the server to shut down
-        QApplication::processEvents();
-        
-        loop.exec(); // wait for either finished or timeout
-
-        if (process->state() != QProcess::NotRunning) {
-            shutdownScreen->showErrorMessage("Forcefully closing server");
-            QApplication::processEvents();
-            
-            process->kill();
-            process->waitForFinished(3000);
-        }
     }
     
-    // Stop phrase rotation to show we're about to close
-    shutdownScreen->stopPhraseRotation();
-    QApplication::processEvents();
-    
-    // Wait a moment to show 100% before closing
-    QTimer::singleShot(1000, []() {
-        QApplication::quit();
-    });
+    qDebug() << "MainWindow cleanup completed";
 }
 
-void MainWindow::setupMainUI() {
-    // Set window properties
+void MainWindow::setupOptimizedUI()
+{
+    // Set window properties with optimized settings
     setWindowTitle("Recall - Flashcard Study App");
     resize(1024, 768);
     
@@ -304,7 +171,7 @@ void MainWindow::setupMainUI() {
     // Create main layout
     QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
     
-    // Create header with modern design
+    // Create header with cached resources
     QWidget *header = new QWidget(centralWidget);
     QHBoxLayout *headerLayout = new QHBoxLayout(header);
     
@@ -333,21 +200,17 @@ void MainWindow::setupMainUI() {
     headerLayout->addWidget(divider);
     headerLayout->addWidget(subtitleLabel);
     headerLayout->addStretch();
-    
-    // Add some padding to the header
     headerLayout->setContentsMargins(20, 20, 20, 20);
     
-    // Add header to main layout
     mainLayout->addWidget(header);
     
-    // Create deck grid view
+    // Create optimized deck grid view
     deckGridView = new DeckGridView(centralWidget);
     connect(deckGridView, &DeckGridView::deckSelected, this, &MainWindow::onDeckSelected);
     
-    // Add deck grid to main layout
-    mainLayout->addWidget(deckGridView, 1); // Stretch factor of 1
+    mainLayout->addWidget(deckGridView, 1);
     
-    // Create a container for the buttons
+    // Create button container
     QWidget *buttonContainer = new QWidget(centralWidget);
     QHBoxLayout *buttonLayout = new QHBoxLayout(buttonContainer);
     
@@ -363,19 +226,15 @@ void MainWindow::setupMainUI() {
     settingsButton->setMinimumSize(150, 40);
     connect(settingsButton, &QPushButton::clicked, this, &MainWindow::onSettingsClicked);
     
-    // Add buttons to button layout
     buttonLayout->addWidget(createDeckButton);
     buttonLayout->addStretch();
     buttonLayout->addWidget(settingsButton);
     buttonLayout->setContentsMargins(20, 10, 20, 20);
     
-    // Add button container to main layout
     mainLayout->addWidget(buttonContainer);
-    
-    // Set layout for central widget
     centralWidget->setLayout(mainLayout);
     
-    // Apply modern dark stylesheet
+    // Apply optimized stylesheet
     setStyleSheet(
         "QMainWindow {"
         "   background-color: #121212;"
@@ -407,6 +266,131 @@ void MainWindow::setupMainUI() {
     );
 }
 
+void MainWindow::initializePerformanceMonitoring()
+{
+    if (performanceMonitoringEnabled && performanceMonitor) {
+        performanceMonitor->setMonitoringInterval(5000); // 5 seconds
+        performanceMonitor->setMemoryThreshold(80); // 80% memory threshold
+        performanceMonitor->startMonitoring();
+        
+        qDebug() << "Performance monitoring initialized";
+    }
+}
+
+void MainWindow::preloadResources()
+{
+    if (resourcesPreloaded) {
+        return;
+    }
+    
+    qDebug() << "Preloading resources...";
+    
+    // Find and preload animations
+    QString appDirPath = QCoreApplication::applicationDirPath();
+    QStringList possibleDirs;
+    possibleDirs << appDirPath + "/../../../static/images/"
+                << "static/images/"
+                << "../static/images/"
+                << "../../static/images/"
+                << appDirPath + "/static/images/";
+    
+    for (const QString &dir : possibleDirs) {
+        QFileInfo loadingCheck(dir + "loading.gif");
+        if (loadingCheck.exists()) {
+            animationPath = dir + "loading.gif";
+            
+            // Preload animations
+            resourceCache->preloadAnimation(animationPath);
+            
+            QString shutdownPath = dir + "shutdown.gif";
+            if (QFileInfo(shutdownPath).exists()) {
+                resourceCache->preloadAnimation(shutdownPath);
+            }
+            
+            qDebug() << "Preloaded animations from:" << dir;
+            break;
+        }
+    }
+    
+    resourcesPreloaded = true;
+    qDebug() << "Resource preloading completed";
+}
+
+void MainWindow::optimizeMemoryUsage()
+{
+    QMutexLocker locker(&performanceMutex);
+    
+    // Clear unused caches
+    resourceCache->clearImageCache();
+    
+    // Clear Qt's internal caches
+    QPixmapCache::clear();
+    
+    // Force garbage collection in Qt
+    QCoreApplication::processEvents();
+    
+    qDebug() << "Memory optimization completed";
+}
+
+void MainWindow::onServerReady()
+{
+    qDebug() << "Server is ready, setting up main UI";
+    
+    // Close startup screen
+    if (startupScreen) {
+        startupScreen->accept();
+        startupScreen->deleteLater();
+        startupScreen = nullptr;
+    }
+    
+    // Setup main UI
+    setupOptimizedUI();
+    
+    // Show main window
+    show();
+    
+    // Load decks asynchronously
+    if (deckGridView) {
+        QTimer::singleShot(100, deckGridView, &DeckGridView::loadDecks);
+    }
+}
+
+void MainWindow::onServerError(const QString& error)
+{
+    qDebug() << "Server error:" << error;
+    
+    if (startupScreen) {
+        startupScreen->showErrorMessage("Server failed to start: " + error);
+        QTimer::singleShot(3000, this, [this]() {
+            QApplication::quit();
+        });
+    } else {
+        QMessageBox::critical(this, "Server Error", 
+                            "Server encountered an error: " + error);
+    }
+}
+
+void MainWindow::onPerformanceUpdate(const QVariantMap& stats)
+{
+    // Log performance statistics
+    if (stats.contains("memoryPercent")) {
+        double memoryPercent = stats["memoryPercent"].toDouble();
+        if (memoryPercent > 80.0) {
+            qDebug() << "High memory usage detected:" << memoryPercent << "%";
+            // Trigger memory optimization
+            QTimer::singleShot(0, this, &MainWindow::optimizeMemoryUsage);
+        }
+    }
+    
+    // Update cache statistics
+    if (resourceCache) {
+        double hitRatio = resourceCache->getHitRatio();
+        if (hitRatio < 0.5) { // Less than 50% hit ratio
+            qDebug() << "Low cache hit ratio:" << hitRatio;
+        }
+    }
+}
+
 void MainWindow::onDeckSelected(const QString& deckId) {
     // For now, just show a message box with the selected deck ID
     QMessageBox::information(this, "Deck Selected", 
@@ -430,8 +414,623 @@ void MainWindow::onSettingsClicked() {
                            "Settings functionality will be implemented in a future update.");
 }
 
-MainWindow::~MainWindow() {
-    if (!startupScreen && !shutdownScreen) {
-        cleanupAndExit();
+void MainWindow::cleanupAndExit()
+{
+    qDebug() << "cleanupAndExit called";
+    
+    // Show shutdown screen with proper animation
+    if (!shutdownScreen) {
+        shutdownScreen = new LoadingScreen(LoadingScreen::Shutdown);
+        
+        // Set shutdown animation
+        if (!animationPath.isEmpty()) {
+            QString shutdownAnimPath = animationPath;
+            shutdownAnimPath.replace("loading.gif", "shutdown.gif");
+            
+            if (QFileInfo(shutdownAnimPath).exists()) {
+                shutdownScreen->setAnimationPath(shutdownAnimPath);
+                qDebug() << "Using shutdown animation:" << shutdownAnimPath;
+            } else {
+                shutdownScreen->setAnimationPath(animationPath);
+                qDebug() << "Using loading animation for shutdown:" << animationPath;
+            }
+        }
+        
+        shutdownScreen->show();
+        shutdownScreen->startPhraseRotation();
+        QApplication::processEvents();
+    }
+    
+    // Stop performance monitoring
+    if (performanceMonitor) {
+        performanceMonitor->stopMonitoring();
+        qDebug() << "Performance monitoring stopped";
+    }
+    
+    // Stop server gracefully
+    if (serverManager) {
+        qDebug() << "Requesting server shutdown...";
+        serverManager->stopServer();
+        
+        // Wait for server to stop
+        QEventLoop loop;
+        QTimer timeoutTimer;
+        timeoutTimer.setSingleShot(true);
+        
+        connect(serverManager, &ServerManager::stateChanged, [&](ServerManager::ServerState state) {
+            if (state == ServerManager::Stopped) {
+                qDebug() << "Server stopped successfully";
+                loop.quit();
+            }
+        });
+        
+        connect(&timeoutTimer, &QTimer::timeout, [&]() {
+            qDebug() << "Server shutdown timeout - forcing exit";
+            loop.quit();
+        });
+        
+        timeoutTimer.start(5000); // 5 second timeout
+        loop.exec();
+    }
+    
+    // Clear caches
+    if (resourceCache) {
+        resourceCache->clearAllCaches();
+        qDebug() << "Caches cleared";
+    }
+    
+    // Close shutdown screen and exit
+    if (shutdownScreen) {
+        shutdownScreen->stopPhraseRotation();
+        QApplication::processEvents();
+        
+        QTimer::singleShot(1000, []() {
+            qDebug() << "Exiting application";
+            QApplication::quit();
+        });
+    } else {
+        QApplication::quit();
     }
 }
+
+// ============================================================================
+// ServerManager Implementation
+// ============================================================================
+
+ServerManager::ServerManager(QObject *parent)
+    : QObject(parent),
+    serverProcess(nullptr),
+    networkManager(new QNetworkAccessManager(this)),
+    healthCheckTimer(new QTimer(this)),
+    currentState(Stopped),
+    retryCount(0),
+    maxRetries(30),
+    healthCheckInterval(10000), // 10 seconds
+    startupTimeout(60), // 60 seconds
+    pathsCached(false)
+{
+    connect(healthCheckTimer, &QTimer::timeout, this, &ServerManager::checkServerHealth);
+}
+
+ServerManager::~ServerManager()
+{
+    stopServer();
+}
+
+void ServerManager::startServer()
+{
+    if (currentState == Starting || currentState == Running) {
+        return;
+    }
+    
+    setState(Starting);
+    retryCount = 0;
+    
+    // Cache paths if not already done
+    if (!pathsCached) {
+        cachedServerScript = findServerScript();
+        cachedWorkingDirectory = determineWorkingDirectory();
+        pathsCached = true;
+    }
+    
+    // Create and configure process
+    if (serverProcess) {
+        cleanupProcess();
+    }
+    
+    serverProcess = new QProcess(this);
+    connect(serverProcess, &QProcess::started, this, &ServerManager::onProcessStarted);
+    connect(serverProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, &ServerManager::onProcessFinished);
+    connect(serverProcess, &QProcess::errorOccurred, this, &ServerManager::onProcessError);
+    
+    // Set working directory and start process
+    serverProcess->setWorkingDirectory(cachedWorkingDirectory);
+    serverProcess->start("python", QStringList() << cachedServerScript);
+    
+    if (!serverProcess->waitForStarted(5000)) {
+        setState(Error);
+        emit serverError("Failed to start server process");
+        return;
+    }
+    
+    qDebug() << "Server process started, beginning health checks";
+}
+
+void ServerManager::stopServer()
+{
+    if (currentState == Stopped || currentState == Stopping) {
+        return;
+    }
+    
+    setState(Stopping);
+    healthCheckTimer->stop();
+    
+    if (serverProcess && serverProcess->state() != QProcess::NotRunning) {
+        serverProcess->terminate();
+        
+        if (!serverProcess->waitForFinished(10000)) {
+            serverProcess->kill();
+            serverProcess->waitForFinished(3000);
+        }
+    }
+    
+    cleanupProcess();
+    setState(Stopped);
+}
+
+void ServerManager::setHealthCheckInterval(int milliseconds)
+{
+    healthCheckInterval = milliseconds;
+    if (healthCheckTimer->isActive()) {
+        healthCheckTimer->setInterval(milliseconds);
+    }
+}
+
+void ServerManager::setStartupTimeout(int seconds)
+{
+    startupTimeout = seconds;
+    maxRetries = (startupTimeout * 1000) / healthCheckInterval;
+}
+
+void ServerManager::checkServerHealth()
+{
+    if (currentState != Starting && currentState != Running) {
+        return;
+    }
+    
+    QNetworkRequest request(QUrl("http://127.0.0.1:8000/"));
+    request.setRawHeader("User-Agent", "Recall-Client");
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, 
+                        QNetworkRequest::NoLessSafeRedirectPolicy);
+    
+    QNetworkReply *reply = networkManager->get(request);
+    connect(reply, &QNetworkReply::finished, this, &ServerManager::onHealthCheckReply);
+    
+    // Set timeout for the request
+    QTimer::singleShot(5000, reply, [reply]() {
+        if (reply->isRunning()) {
+            reply->abort();
+        }
+    });
+}
+
+void ServerManager::onProcessStarted()
+{
+    qDebug() << "Server process started successfully";
+    healthCheckTimer->start(healthCheckInterval);
+}
+
+void ServerManager::onProcessFinished(int exitCode, QProcess::ExitStatus exitStatus)
+{
+    qDebug() << "Server process finished with exit code:" << exitCode;
+    
+    healthCheckTimer->stop();
+    
+    if (currentState == Stopping) {
+        setState(Stopped);
+    } else {
+        setState(Error);
+        emit serverError(QString("Server process exited unexpectedly (code: %1)").arg(exitCode));
+    }
+}
+
+void ServerManager::onProcessError(QProcess::ProcessError error)
+{
+    QString errorString;
+    switch (error) {
+        case QProcess::FailedToStart:
+            errorString = "Failed to start server process";
+            break;
+        case QProcess::Crashed:
+            errorString = "Server process crashed";
+            break;
+        case QProcess::Timedout:
+            errorString = "Server process timed out";
+            break;
+        default:
+            errorString = "Unknown server process error";
+            break;
+    }
+    
+    qDebug() << "Server process error:" << errorString;
+    setState(Error);
+    emit serverError(errorString);
+}
+
+void ServerManager::onHealthCheckReply()
+{
+    QNetworkReply *reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) {
+        return;
+    }
+    
+    reply->deleteLater();
+    
+    if (reply->error() == QNetworkReply::NoError) {
+        if (currentState == Starting) {
+            qDebug() << "Server health check successful, server is ready";
+            setState(Running);
+            healthCheckTimer->stop();
+            emit serverReady();
+        }
+    } else {
+        retryCount++;
+        qDebug() << "Health check failed, attempt" << retryCount << "of" << maxRetries;
+        
+        if (retryCount >= maxRetries) {
+            healthCheckTimer->stop();
+            setState(Error);
+            emit serverError("Server failed to start within timeout period");
+        }
+    }
+}
+
+void ServerManager::setState(ServerState newState)
+{
+    if (currentState != newState) {
+        currentState = newState;
+        emit stateChanged(newState);
+    }
+}
+
+QString ServerManager::findServerScript()
+{
+    QString appDirPath = QCoreApplication::applicationDirPath();
+    QStringList possiblePaths = {
+        "backend/server.py",
+        "../backend/server.py",
+        "../../backend/server.py",
+        appDirPath + "/backend/server.py",
+        appDirPath + "/../backend/server.py"
+    };
+    
+    for (const QString &path : possiblePaths) {
+        QFileInfo scriptCheck(path);
+        if (scriptCheck.exists() && scriptCheck.isFile()) {
+            qDebug() << "Found server script at:" << scriptCheck.absoluteFilePath();
+            return scriptCheck.absoluteFilePath();
+        }
+    }
+    
+    qDebug() << "Could not find server.py script, using default path";
+    return "../../backend/server.py";
+}
+
+QString ServerManager::determineWorkingDirectory()
+{
+    QString workingDir = QDir::current().absolutePath();
+    
+    if (workingDir.contains("build")) {
+        QDir buildDir(workingDir);
+        buildDir.cdUp(); // Go up from build/Desktop_Qt_6_9_0_MinGW_64_bit-Debug
+        buildDir.cdUp(); // Go up to project root
+        workingDir = buildDir.absolutePath();
+        qDebug() << "Detected build environment, using project root:" << workingDir;
+    }
+    
+    return workingDir;
+}
+
+void ServerManager::cleanupProcess()
+{
+    if (serverProcess) {
+        serverProcess->disconnect();
+        serverProcess->deleteLater();
+        serverProcess = nullptr;
+    }
+}
+
+// ============================================================================
+// ResourceCache Implementation
+// ============================================================================
+
+ResourceCache::ResourceCache(QObject *parent)
+    : QObject(parent),
+    imageCache(100), // Default cache size
+    animationCache(20),
+    maxCacheSizeMB(100),
+    hitCount(0),
+    missCount(0)
+{
+    // Set cache size limits
+    imageCache.setMaxCost(maxCacheSizeMB * 1024 * 1024); // Convert MB to bytes
+}
+
+ResourceCache::~ResourceCache()
+{
+    clearAllCaches();
+}
+
+QPixmap ResourceCache::getImage(const QString& path)
+{
+    QMutexLocker locker(&cacheMutex);
+    
+    QPixmap *cached = imageCache.object(path);
+    if (cached) {
+        updateCacheStats(true);
+        return *cached;
+    }
+    
+    updateCacheStats(false);
+    
+    // Load image and cache it
+    QPixmap pixmap(path);
+    if (!pixmap.isNull()) {
+        imageCache.insert(path, new QPixmap(pixmap), pixmap.width() * pixmap.height() * 4);
+    }
+    
+    return pixmap;
+}
+
+void ResourceCache::preloadImage(const QString& path)
+{
+    QMutexLocker locker(&cacheMutex);
+    
+    if (!imageCache.contains(path)) {
+        QPixmap pixmap(path);
+        if (!pixmap.isNull()) {
+            imageCache.insert(path, new QPixmap(pixmap), pixmap.width() * pixmap.height() * 4);
+            qDebug() << "Preloaded image:" << path;
+        }
+    }
+}
+
+void ResourceCache::clearImageCache()
+{
+    QMutexLocker locker(&cacheMutex);
+    imageCache.clear();
+    qDebug() << "Image cache cleared";
+}
+
+QMovie* ResourceCache::getAnimation(const QString& path)
+{
+    QMutexLocker locker(&cacheMutex);
+    
+    QMovie *cached = animationCache.object(path);
+    if (cached) {
+        updateCacheStats(true);
+        return cached;
+    }
+    
+    updateCacheStats(false);
+    
+    // Load animation and cache it
+    QMovie *movie = new QMovie(path);
+    if (movie->isValid()) {
+        animationCache.insert(path, movie);
+    } else {
+        delete movie;
+        movie = nullptr;
+    }
+    
+    return movie;
+}
+
+void ResourceCache::preloadAnimation(const QString& path)
+{
+    QMutexLocker locker(&cacheMutex);
+    
+    if (!animationCache.contains(path)) {
+        QMovie *movie = new QMovie(path);
+        if (movie->isValid()) {
+            animationCache.insert(path, movie);
+            qDebug() << "Preloaded animation:" << path;
+        } else {
+            delete movie;
+        }
+    }
+}
+
+void ResourceCache::clearAnimationCache()
+{
+    QMutexLocker locker(&cacheMutex);
+    animationCache.clear();
+    qDebug() << "Animation cache cleared";
+}
+
+void ResourceCache::setCacheSize(int maxSizeMB)
+{
+    QMutexLocker locker(&cacheMutex);
+    maxCacheSizeMB = maxSizeMB;
+    imageCache.setMaxCost(maxSizeMB * 1024 * 1024);
+}
+
+int ResourceCache::getCacheSize() const
+{
+    QMutexLocker locker(&cacheMutex);
+    return maxCacheSizeMB;
+}
+
+void ResourceCache::clearAllCaches()
+{
+    clearImageCache();
+    clearAnimationCache();
+}
+
+double ResourceCache::getHitRatio() const
+{
+    QMutexLocker locker(&cacheMutex);
+    int total = hitCount + missCount;
+    return total > 0 ? (double)hitCount / total : 0.0;
+}
+
+void ResourceCache::updateCacheStats(bool hit)
+{
+    if (hit) {
+        hitCount++;
+    } else {
+        missCount++;
+    }
+}
+
+// ============================================================================
+// PerformanceMonitor Implementation
+// ============================================================================
+
+PerformanceMonitor::PerformanceMonitor(QObject *parent)
+    : QObject(parent),
+    monitoringTimer(new QTimer(this)),
+    monitoringInterval(5000),
+    memoryThreshold(80),
+    isMonitoring(false)
+{
+    connect(monitoringTimer, &QTimer::timeout, this, &PerformanceMonitor::collectPerformanceData);
+}
+
+PerformanceMonitor::~PerformanceMonitor()
+{
+    stopMonitoring();
+}
+
+void PerformanceMonitor::startMonitoring()
+{
+    if (!isMonitoring) {
+        isMonitoring = true;
+        monitoringTimer->start(monitoringInterval);
+        qDebug() << "Performance monitoring started";
+    }
+}
+
+void PerformanceMonitor::stopMonitoring()
+{
+    if (isMonitoring) {
+        isMonitoring = false;
+        monitoringTimer->stop();
+        qDebug() << "Performance monitoring stopped";
+    }
+}
+
+void PerformanceMonitor::recordOperation(const QString& operation, qint64 durationMs)
+{
+    QMutexLocker locker(&statsMutex);
+    
+    OperationStats &stats = operationStats[operation];
+    stats.totalDuration += durationMs;
+    stats.count++;
+    
+    if (stats.count == 1) {
+        stats.maxDuration = stats.minDuration = durationMs;
+    } else {
+        stats.maxDuration = qMax(stats.maxDuration, durationMs);
+        stats.minDuration = qMin(stats.minDuration, durationMs);
+    }
+    
+    // Emit warning for slow operations
+    if (durationMs > 1000) { // More than 1 second
+        emit slowOperation(operation, durationMs);
+    }
+}
+
+void PerformanceMonitor::recordMemoryUsage()
+{
+    QMutexLocker locker(&statsMutex);
+    
+    qint64 memoryUsage = getCurrentMemoryUsage();
+    memoryUsageHistory.append(memoryUsage);
+    
+    // Keep only recent history
+    if (memoryUsageHistory.size() > 100) {
+        memoryUsageHistory.removeFirst();
+    }
+}
+
+void PerformanceMonitor::recordNetworkOperation(const QString& operation, qint64 bytes, qint64 durationMs)
+{
+    recordOperation(QString("network_%1").arg(operation), durationMs);
+    
+    // Calculate network speed
+    if (durationMs > 0) {
+        double speedMBps = (bytes / 1024.0 / 1024.0) / (durationMs / 1000.0);
+        qDebug() << "Network operation" << operation << "speed:" << speedMBps << "MB/s";
+    }
+}
+
+void PerformanceMonitor::setMonitoringInterval(int milliseconds)
+{
+    monitoringInterval = milliseconds;
+    if (monitoringTimer->isActive()) {
+        monitoringTimer->setInterval(milliseconds);
+    }
+}
+
+void PerformanceMonitor::setMemoryThreshold(int percentThreshold)
+{
+    memoryThreshold = percentThreshold;
+}
+
+void PerformanceMonitor::collectPerformanceData()
+{
+    QMutexLocker locker(&statsMutex);
+    
+    // Collect current performance data
+    qint64 memoryUsage = getCurrentMemoryUsage();
+    double cpuUsage = getCurrentCpuUsage();
+    
+    memoryUsageHistory.append(memoryUsage);
+    cpuUsageHistory.append(static_cast<qint64>(cpuUsage * 100));
+    
+    // Clean up old data
+    cleanupOldData();
+    
+    // Calculate memory percentage (simplified)
+    double memoryPercent = 50.0; // Placeholder - would need platform-specific implementation
+    
+    // Emit performance update
+    QVariantMap stats;
+    stats["memoryUsage"] = memoryUsage;
+    stats["memoryPercent"] = memoryPercent;
+    stats["cpuUsage"] = cpuUsage;
+    stats["operationCount"] = operationStats.size();
+    
+    emit performanceUpdate(stats);
+    
+    // Check memory threshold
+    if (memoryPercent > memoryThreshold) {
+        emit memoryWarning(static_cast<int>(memoryPercent));
+    }
+}
+
+qint64 PerformanceMonitor::getCurrentMemoryUsage()
+{
+    // Simplified memory usage - would need platform-specific implementation
+    return QCoreApplication::applicationPid() * 1024; // Placeholder
+}
+
+double PerformanceMonitor::getCurrentCpuUsage()
+{
+    // Simplified CPU usage - would need platform-specific implementation
+    return 0.0; // Placeholder
+}
+
+void PerformanceMonitor::cleanupOldData()
+{
+    // Keep only recent history
+    if (memoryUsageHistory.size() > 100) {
+        memoryUsageHistory.removeFirst();
+    }
+    if (cpuUsageHistory.size() > 100) {
+        cpuUsageHistory.removeFirst();
+    }
+}
+

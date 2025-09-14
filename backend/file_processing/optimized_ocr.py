@@ -18,10 +18,33 @@ import cv2
 import numpy as np
 from paddleocr import PaddleOCR, FormulaRecognition
 from utils.logger_config import get_logger
-from utils.performance_optimizer import (
-    get_memory_manager, get_processing_pool, get_file_cache,
-    performance_monitor, cached_function
-)
+# Import performance optimizer with fallback
+try:
+    from utils.performance_optimizer import (
+        get_memory_manager, get_processing_pool, get_file_cache,
+        performance_monitor, cached_function
+    )
+    PERFORMANCE_OPTIMIZER_AVAILABLE = True
+except ImportError:
+    # Fallback implementations when performance optimizer is not available
+    PERFORMANCE_OPTIMIZER_AVAILABLE = False
+    
+    def get_memory_manager():
+        return None
+    
+    def get_processing_pool():
+        return None
+    
+    def get_file_cache():
+        return None
+    
+    def performance_monitor(func):
+        return func  # No-op decorator
+    
+    def cached_function(cache_key_func=None, ttl=3600):
+        def decorator(func):
+            return func  # No-op decorator
+        return decorator
 
 logger = get_logger()
 
@@ -32,12 +55,20 @@ class OptimizedOCRProcessor:
         self._ocr_model = None
         self._formula_model = None
         self._model_lock = threading.Lock()
-        self._memory_manager = get_memory_manager()
-        self._processing_pool = get_processing_pool()
-        self._cache = get_file_cache()
         
-        # Register cleanup callback
-        self._memory_manager.register_cleanup_callback(self._cleanup_models)
+        # Initialize performance components if available
+        if PERFORMANCE_OPTIMIZER_AVAILABLE:
+            self._memory_manager = get_memory_manager()
+            self._processing_pool = get_processing_pool()
+            self._cache = get_file_cache()
+            
+            # Register cleanup callback
+            if self._memory_manager:
+                self._memory_manager.register_cleanup_callback(self._cleanup_models)
+        else:
+            self._memory_manager = None
+            self._processing_pool = None
+            self._cache = None
     
     def _get_ocr_model(self):
         """Get OCR model with lazy loading."""
@@ -85,17 +116,19 @@ class OptimizedOCRProcessor:
             mtime = os.path.getmtime(image_path)
             cache_key = f"ocr_{hash(image_path)}_{hash(str(bbox))}_{chunk_type}_{mtime}"
             
-            # Try to get from cache
-            cached_result = self._cache.get_cached_result(cache_key, image_path)
-            if cached_result is not None:
-                logger.debug(f"Cache hit for OCR chunk: {cache_key}")
-                return cached_result
+            # Try to get from cache if available
+            if self._cache:
+                cached_result = self._cache.get_cached_result(cache_key, image_path)
+                if cached_result is not None:
+                    logger.debug(f"Cache hit for OCR chunk: {cache_key}")
+                    return cached_result
             
             # Process the chunk
             result = self._process_chunk_internal(image_path, bbox, chunk_type)
             
-            # Cache the result
-            self._cache.cache_result(cache_key, result, image_path)
+            # Cache the result if cache is available
+            if self._cache:
+                self._cache.cache_result(cache_key, result, image_path)
             
             return result
             

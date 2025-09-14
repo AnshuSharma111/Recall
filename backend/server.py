@@ -7,13 +7,27 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import List, Callable, Dict, Any, Optional, Union
 
+# Add current directory to Python path for imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from dotenv import load_dotenv
 import uvicorn
-from fastapi import File, Form, UploadFile, FastAPI, Depends, HTTPException, status, Header
+from fastapi import File, Form, UploadFile, FastAPI, Depends, HTTPException, status, Header, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
+
 from utils.file_operations import ensure_dir, cleanup_processing_dir, copy_file, merge_json_files, manage_flashcards, safe_move_images, cleanup_large_files, optimize_memory_usage
 from utils.deck_migration import migrate_decks_from_build
 from utils.path_resolver import PathResolver
+
+# Import processing modules - use standard OCR for stability
+process_document_dir = None
+try:
+    from file_processing.ocr import process_document_dir
+    print("✓ Loaded standard OCR processing")
+except ImportError as e:
+    print(f"✗ OCR processing not available: {e}")
+    process_document_dir = None
 
 # Load environment variables if available
 try:
@@ -101,15 +115,13 @@ try:
     pdf_to_img = file_processing.pdf_to_img
     chunk_files = file_processing.chunk_files
     
-    # Import OCR processing function
-    try:
-        from file_processing.ocr import process_document_dir
+    # Log OCR processing availability
+    if process_document_dir is not None:
         if first_run and logger is not None:
-            logger.info("OCR processing module imported successfully.")
-    except ImportError as e:
-        if logger is not None:
-            logger.error(f"Error importing OCR module: {e}")
-        process_document_dir = None
+            logger.info("OCR processing module loaded successfully.")
+    else:
+        if first_run and logger is not None:
+            logger.warning("OCR processing module not available - deck creation will be limited")
         
     # Import question generation function
     try:
@@ -136,13 +148,13 @@ except ImportError as e:
 # Pre and Post server operations
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # pre
+    # Startup
     if logger is not None:
-        logger.info("Application startup (via lifespan manager)...")
+        logger.info("Optimized application startup (via lifespan manager)...")
     
     # Log the resolved paths for verification
     if logger is not None:
-        logger.info("=== PathResolver Configuration ===")
+        logger.info("=== Optimized PathResolver Configuration ===")
         logger.info(f"Project Root: {APP_BASE_DIR}")
         logger.info(f"Backend Directory: {BACKEND_DIR}")
         logger.info(f"Decks Directory: {DECKS_DIR}")
@@ -167,15 +179,16 @@ async def lifespan(app: FastAPI):
                 logger.error(f"ERROR: {name} is not an absolute path: {path}")
                 all_absolute = False
             else:
-                logger.debug(f"✓ {name} is absolute: {path}")
+                logger.debug(f"{name} is absolute: {path}")
         
         if all_absolute:
-            logger.info("✓ All paths are absolute - path resolution successful")
+            logger.info("All paths are absolute - path resolution successful")
         else:
-            logger.error("✗ Some paths are not absolute - path resolution failed")
+            logger.error("Some paths are not absolute - path resolution failed")
         
-        logger.info("=== End PathResolver Configuration ===")
-        
+        logger.info("=== End Optimized PathResolver Configuration ===")
+    
+
     # Migrate any decks from build directory to root decks directory
     try:
         migrated = migrate_decks_from_build(DECKS_DIR)
@@ -186,13 +199,14 @@ async def lifespan(app: FastAPI):
             logger.error(f"Error migrating decks: {str(e)}")
     
     yield
-    # post
-    # recursively delete files in the to_process directory, but preserve any images that may be referenced
-    # in existing flashcards or have been moved to the static images directory
+    
+    # Shutdown
+    if logger is not None:
+        logger.info("Optimized application shutdown...")
+    
+    # Cleanup processing directory
     if os.path.exists(PROCESSING_DIR):
-        # Use our utility function to clean up processing directory while preserving important subdirectories
         keep_subdirs = ["questions", "images"]
-        # This is a general cleanup without a specific deck_id
         cleanup_result = cleanup_processing_dir(PROCESSING_DIR, keep_subdirs, deck_id=None)
         
         if cleanup_result and logger is not None:
@@ -200,7 +214,6 @@ async def lifespan(app: FastAPI):
         elif not cleanup_result and logger is not None:
             logger.warning("Error cleaning up processing directory")
         
-        # Clean up large files to free disk space
         cleanup_large_files(PROCESSING_DIR, size_limit_mb=50)
     
     # Perform memory optimization on shutdown
@@ -209,19 +222,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         if logger is not None:
             logger.warning(f"Error during memory optimization: {e}")
-    
-    if logger is not None:
-        logger.info("Application shutdown...")
 
 app = FastAPI(
-    description= '''
-Recall is an app built for students to improve their learning process by using 
-flashcards to memorize their notes. The basic crust of Recall is: 
- 
-"Upload your notes to Recall and have it auto-generate high-quality flashcards for 
-you automatically using AI" 
+    description='''
+Recall - AI-powered flashcard generation.
+
+Features:
+- Document processing pipeline
+- AI-powered question generation
+- Real-time progress tracking
+- Centralized path management
     ''',
-    version="0.1.0",
+    version="0.2.0",
     title="Recall",
     lifespan=lifespan
 )
@@ -231,67 +243,75 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.get('/')
 def health_check():
-    '''
-    Health Check Endpoint
-    '''
+    """Health Check Endpoint"""
     if logger is not None:
         logger.info("Health check endpoint called")
     return {
-        "Status": "Running"
+        "Status": "Running",
+        "Version": "0.2.0 (Core Optimized)",
+        "Features": {
+            "document_processing": True,
+            "ai_generation": True,
+            "path_management": True,
+            "optimized_ocr": True,
+            "enhanced_file_ops": True
+        }
     }
 
 # Status tracking for deck processing
 processing_status: Dict[str, Dict[str, str]] = {}
 
-# Endpoint to check deck processing status
 @app.get("/api/deck/{deck_id}/status", dependencies=[Depends(api_key_auth)])
 def check_deck_status(deck_id: str):
-    """
-    Check the processing status of a deck
-    """
+    """Check the processing status of a deck"""
     global processing_status
     
     if logger is not None:
         logger.info(f"GET /api/deck/{deck_id}/status called.")
     
+
+    
     # Check if the deck exists as a completed deck first
     deck_path = os.path.join(DECKS_DIR, f"{deck_id}.json")
     
-    # If deck file exists, processing is complete
     if os.path.exists(deck_path):
-        # Clean up the processing status since deck is complete
         if deck_id in processing_status:
             del processing_status[deck_id]
             if logger is not None:
                 logger.info(f"Cleaned up processing status for completed deck {deck_id}")
         
-        return {
+        result = {
             "status": "complete",
             "message": "Deck processing complete"
         }
+        
+
+        return result
     
     # If we're tracking the status, return it
     if deck_id in processing_status:
         status_info = processing_status[deck_id]
         if logger is not None:
             logger.debug(f"Returning status for deck {deck_id}: {status_info}")
+        
+
         return status_info
     
     # Otherwise, return unknown status
     if logger is not None:
         logger.warning(f"No processing status found for deck {deck_id}")
-    return {"status": "unknown", "message": "Unknown deck ID"}
+    
+    result = {"status": "unknown", "message": "Unknown deck ID"}
+    return result
 
-# Function to update deck processing status
 def update_deck_status(deck_id: str, status: str, message: str):
-    """
-    Update the status of a deck being processed
-    """
+    """Update the status of a deck being processed"""
     global processing_status
     processing_status[deck_id] = {
         "status": status,
         "message": message
     }
+    
     if logger is not None:
         logger.info(f"Updated status for deck {deck_id}: {status} - {message}")
 
@@ -346,9 +366,11 @@ async def create_deck(deck_title: str = Form(...), files: List[UploadFile] = Fil
             }
         )
 
-    await send_ws("Verifying Files", deck_id)
+    await send_ws("Verifying uploaded files", deck_id)
     if logger is not None:
-        logger.info("Verifying uploaded files...")
+        logger.info(f"STEP 1: Verifying {len(files)} uploaded files for deck {deck_id}")
+        for i, file in enumerate(files):
+            logger.info(f"  File {i+1}: {file.filename} ({file.content_type})")
 
     # Remove debugging print statement
     # for file in files:
@@ -378,30 +400,41 @@ async def create_deck(deck_title: str = Form(...), files: List[UploadFile] = Fil
                 }
             )
 
-    await send_ws("Verification Complete", deck_id)
+    await send_ws("File verification complete", deck_id)
     if logger is not None:
-        logger.info("File verification complete.")
+        logger.info(f"STEP 1 COMPLETE: All files verified successfully for deck {deck_id}")
 
     # Save files for processing
+    await send_ws("Saving files to processing directory", deck_id)
+    if logger is not None:
+        logger.info(f"STEP 2: Saving files to processing directory for deck {deck_id}")
+        logger.info(f"Processing directory: {PROCESSING_DIR}")
+    
     try:
-        # Use our global processing directory
         ensure_dir(PROCESSING_DIR)
         saved_files = []
-        for file in files:
+        for i, file in enumerate(files):
             file_path = os.path.join(PROCESSING_DIR, str(file.filename))
-            # Verify we're using absolute paths
-            if logger is not None and not os.path.isabs(file_path):
-                logger.warning(f"File path is not absolute: {file_path}")
+            
+            if logger is not None:
+                logger.info(f"  Saving file {i+1}/{len(files)}: {file.filename}")
+                if not os.path.isabs(file_path):
+                    logger.warning(f"File path is not absolute: {file_path}")
             
             # Write the file
+            file_content = await file.read()
             with open(file_path, "wb") as f:
-                f.write(await file.read())
+                f.write(file_content)
             saved_files.append(file_path)
+            
             if logger is not None:
-                logger.info(f"Saved file to absolute path: {file_path}")
+                logger.info(f"  ✓ Saved {len(file_content)} bytes to: {file_path}")
+                
     except Exception as e:
+        error_msg = f"Error saving files: {str(e)}"
         if logger is not None:
-            logger.error(f"Error saving files: {str(e)}")
+            logger.error(f"STEP 2 FAILED: {error_msg}")
+        await send_ws(f"File saving failed: {str(e)}", deck_id, "failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
@@ -411,30 +444,54 @@ async def create_deck(deck_title: str = Form(...), files: List[UploadFile] = Fil
             }
         )
 
-    await send_ws("Saved Files", deck_id)
+    await send_ws("All files saved successfully", deck_id)
     if logger is not None:
-        logger.info("All files saved.")
+        logger.info(f"STEP 2 COMPLETE: All {len(saved_files)} files saved for deck {deck_id}")
 
     # Start processing: Convert all pdfs to images and save to a dir with a subfolder per PDF
-    for file in saved_files:
+    pdf_count = sum(1 for f in saved_files if f.endswith(".pdf"))
+    img_count = len(saved_files) - pdf_count
+    
+    if logger is not None:
+        logger.info(f"STEP 3: Processing {pdf_count} PDFs and {img_count} images for deck {deck_id}")
+    
+    await send_ws(f"Processing {pdf_count} PDFs and {img_count} images", deck_id)
+    
+    for i, file in enumerate(saved_files):
         if file.endswith(".pdf"):
             if logger is not None:
-                logger.info(f"Converting PDF to images: {file}")
-            await send_ws(f"Converting PDF to images: {os.path.basename(file)}", deck_id)
-            # we know pdf_to_img is a callable function here
+                logger.info(f"  Converting PDF {i+1}/{len(saved_files)}: {os.path.basename(file)}")
+            await send_ws(f"Converting PDF: {os.path.basename(file)}", deck_id)
+            
             if pdf_to_img:
-                # Each PDF will be saved to its own subfolder within ./to_process/
-                pdf_to_img(file, PROCESSING_DIR)
+                try:
+                    # Each PDF will be saved to its own subfolder within ./to_process/
+                    pdf_to_img(file, PROCESSING_DIR)
+                    if logger is not None:
+                        logger.info(f"  ✓ PDF conversion completed: {os.path.basename(file)}")
+                except Exception as e:
+                    error_msg = f"PDF conversion failed for {os.path.basename(file)}: {str(e)}"
+                    if logger is not None:
+                        logger.error(f"  ✗ {error_msg}")
+                    await send_ws(f"PDF conversion failed: {str(e)}", deck_id, "failed")
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail={
+                            "code": 14,
+                            "message": "PDF conversion failed",
+                            "source": str(e)
+                        }
+                    )
             else:
-                # This shouldn't happen because of the earlier check, but just to be safe
+                error_msg = "PDF to image conversion function not available"
                 if logger is not None:
-                    logger.error("PDF to image conversion function not available")
-                await send_ws("Error: PDF conversion module not available", deck_id, "failed")
+                    logger.error(f"STEP 3 FAILED: {error_msg}")
+                await send_ws("PDF conversion module not available", deck_id, "failed")
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail={
                         "code": 14,
-                        "message": "Pdf to Image module not loaded correctly",
+                        "message": "PDF to Image module not loaded correctly",
                         "source": f"{file}"
                     }
                 )
@@ -442,84 +499,96 @@ async def create_deck(deck_title: str = Form(...), files: List[UploadFile] = Fil
             # For image files, follow the same structure as PDFs - create a folder per image
             img_basename = os.path.basename(file)
             img_name = os.path.splitext(img_basename)[0]
-            await send_ws(f"Processing image file: {img_basename}", deck_id)
+            
+            if logger is not None:
+                logger.info(f"  Processing image {i+1}/{len(saved_files)}: {img_basename}")
+            await send_ws(f"Processing image: {img_basename}", deck_id)
+            
             img_output_dir = os.path.join(PROCESSING_DIR, img_name, 'images')
-            # Use our utility function to ensure directory exists
             ensure_dir(img_output_dir)
             
-            # Save the image using our utility function
             img_output_path = os.path.join(img_output_dir, img_basename)
             try:
-                # Copy the file with error handling
                 copy_file(file, img_output_path)
+                os.remove(file)  # Remove original
                 if logger is not None:
-                    logger.info(f"Copied image file: {file} to {img_output_dir}")
-                
-                # Remove the original file from the to_process root to avoid confusion
-                os.remove(file)
-                if logger is not None:
-                    logger.debug(f"Removed original file from upload directory: {file}")
+                    logger.info(f"  ✓ Image processed: {img_basename}")
+                    
             except Exception as e:
+                error_msg = f"Error processing image {img_basename}: {str(e)}"
                 if logger is not None:
-                    logger.error(f"Error copying image file {file}: {str(e)}")
+                    logger.error(f"  ✗ {error_msg}")
+                await send_ws(f"Image processing failed: {str(e)}", deck_id, "failed")
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail={
                         "code": 15,
-                        "message": "Error Copying IMG file",
-                        "source": f"{file}"
+                        "message": "Error processing image file",
+                        "source": str(e)
                     }
                 )
 
-    await send_ws("Converted PDFs to Images", deck_id)
+    await send_ws("File processing completed - starting layout analysis", deck_id)
     if logger is not None:
-        logger.info("PDF conversion complete.")
+        logger.info(f"STEP 3 COMPLETE: All files processed for deck {deck_id}")
 
     # Now process all images with chunking
     if chunk_files:
         if logger is not None:
-            logger.info("Starting image chunking process")
+            logger.info(f"STEP 4: Starting layout detection with PaddleOCR for deck {deck_id}")
+        
+        await send_ws("Analyzing document layout with AI", deck_id)
+        
         try:
-            await send_ws("Processing images with PaddleOCR for layout detection", deck_id)
-            
-            # Log what's in the to_process directory
+            # Log what's in the processing directory
             if os.path.exists(PROCESSING_DIR):
                 doc_dirs = [d for d in os.listdir(PROCESSING_DIR) 
                           if os.path.isdir(os.path.join(PROCESSING_DIR, d))]
                 if logger is not None:
-                    logger.info(f"Found {len(doc_dirs)} document directories in {PROCESSING_DIR}: {doc_dirs}")
+                    logger.info(f"  Found {len(doc_dirs)} document directories: {doc_dirs}")
                 
+                total_images = 0
                 for doc_dir in doc_dirs:
                     doc_path = os.path.join(PROCESSING_DIR, doc_dir)
                     images_dir = os.path.join(doc_path, 'images')
                     if os.path.exists(images_dir):
                         images = [f for f in os.listdir(images_dir) 
                                 if os.path.isfile(os.path.join(images_dir, f))]
+                        total_images += len(images)
                         if logger is not None:
-                            logger.info(f"Document {doc_dir} has {len(images)} images: {images}")
+                            logger.info(f"  Document '{doc_dir}': {len(images)} images")
+                
+                await send_ws(f"Processing {total_images} images for layout detection", deck_id)
             else:
                 if logger is not None:
-                    logger.warning(f"Directory {PROCESSING_DIR} does not exist!")
+                    logger.error(f"STEP 4 FAILED: Processing directory does not exist: {PROCESSING_DIR}")
+                await send_ws("Processing directory not found", deck_id, "failed")
+                raise Exception(f"Processing directory not found: {PROCESSING_DIR}")
             
-            # Process all documents in the to_process directory
-            await send_ws("Performing layout analysis and text chunking", deck_id)
-            chunk_files(PROCESSING_DIR)
-            await send_ws("Layout detection complete", deck_id)
+            # Process all documents in the processing directory
             if logger is not None:
-                logger.info("Image chunking completed successfully")
+                logger.info(f"  Running PaddleOCR layout detection on {total_images} images...")
+            
+            chunk_files(PROCESSING_DIR)
+            
+            await send_ws("Layout analysis completed - found text, formulas, and tables", deck_id)
+            if logger is not None:
+                logger.info(f"STEP 4 COMPLETE: Layout detection completed successfully for deck {deck_id}")
             
             # Proceed with OCR processing after chunking
             if process_document_dir:
                 if logger is not None:
-                    logger.info("Starting OCR processing of detected elements")
-                await send_ws("Extracting text and formulas from detected elements", deck_id)
+                    logger.info(f"STEP 5: Starting OCR text extraction for deck {deck_id}")
+                
+                await send_ws("Extracting text and mathematical formulas", deck_id)
+                
                 try:
-                    # Process the chunks with OCR
-                    await send_ws(f"Running OCR on detected text chunks and formulas", deck_id)
+                    await send_ws("Running OCR on detected elements", deck_id)
                     process_document_dir(PROCESSING_DIR)
-                    await send_ws("OCR text extraction complete", deck_id)
+                    
+                    await send_ws("Text and formula extraction completed", deck_id)
                     if logger is not None:
-                        logger.info("OCR processing completed successfully")
+                        logger.info(f"STEP 5 COMPLETE: OCR processing completed successfully for deck {deck_id}")
                     
                     # Generate questions from the OCR results if the module is available
                     if process_document_questions:
@@ -911,26 +980,36 @@ async def get_all_decks():
             }
         )
 
-async def main():
-    """
-    Main entry point for the server
-    """
-    config = uvicorn.Config(
-        "server:app",
-        host="127.0.0.1", 
-        port=8000,
-        log_config=None,
-        reload=False  # Disable reload to prevent duplicate imports
-    )
-    server = uvicorn.Server(config)
-    await server.serve()
-
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        print("🚀 Starting Recall server...")
+        print("📍 Server will run on http://127.0.0.1:8000")
+        print("🔄 Loading models and initializing...")
+        
+        uvicorn.run(
+            app,
+            host="127.0.0.1",
+            port=8000,
+            reload=False,  # Disable reload to prevent duplicate imports
+            log_level="info"
+        )
+        
+        print("✅ Server started successfully!")
+        
+    except KeyboardInterrupt:
+        print("\n🛑 Server stopped by user (Ctrl+C)")
+        if logger is not None:
+            logger.info("Server stopped by user interrupt")
     except Exception as e:
+        print(f"❌ Server startup failed: {e}")
         if logger is not None:
             logger.exception(f"Startup failed: {e}")
         else:
             sys.stderr.write(f"Startup failed: {e}\n")
+        
+        import traceback
+        traceback.print_exc()
         raise SystemExit(1)
+    finally:
+        print("🔄 Server cleanup completed")
+

@@ -15,40 +15,45 @@ The key features of Recall include:
 Recall consists of two main components with an evolving optimized architecture:
 
 ### Architectural Evolution
-The application has evolved from a basic MainWindow implementation to an advanced OptimizedMainWindow architecture featuring:
-- **Modular Design**: Separated concerns with dedicated ServerManager, ResourceCache, and PerformanceMonitor classes
-- **Performance Focus**: Built-in performance monitoring, resource caching, and memory management
-- **Enhanced Reliability**: Advanced server lifecycle management with health monitoring and automatic recovery
-- **Resource Efficiency**: Intelligent caching systems and proactive memory optimization
+The application has evolved from a basic MainWindow implementation to an integrated optimized architecture featuring:
+- **Consolidated Design**: MainWindow now incorporates dedicated ServerManager, ResourceCache, and PerformanceMonitor classes
+- **Performance Focus**: Built-in performance monitoring, resource caching, memory management, and operation profiling
+- **Enhanced Reliability**: Advanced server lifecycle management with health monitoring, automatic recovery, and configurable timeouts
+- **Resource Efficiency**: Intelligent dual caching systems, proactive memory optimization, and hit/miss ratio tracking
 
 ### Frontend (Qt/C++)
-- **Main Application**: Built with Qt framework for cross-platform desktop support
-- **Optimized Architecture**: New OptimizedMainWindow with advanced performance monitoring and resource management
-- **Server Management**: Dedicated ServerManager class with health monitoring and automatic recovery
-- **Resource Caching**: Intelligent caching system for images and animations with configurable size limits
-- **Performance Monitoring**: Real-time performance tracking with memory usage monitoring and operation profiling
-- **Deck Management**: Create, view, and manage flashcard decks
+- **Main Application**: Built with Qt framework for cross-platform desktop support featuring consolidated optimized architecture
+- **Integrated Architecture**: MainWindow includes advanced performance monitoring, resource management, and server lifecycle management
+- **Server Management**: Dedicated ServerManager class with health monitoring, automatic recovery, and configurable timeouts
+- **Resource Caching**: High-performance ResourceCache with dual caching system leveraging Qt's QPixmapCache for images and animations
+- **Performance Monitoring**: Comprehensive PerformanceMonitor with operation profiling, memory usage tracking, and network monitoring
+- **Deck Management**: Create, view, and manage flashcard decks with user feedback
 - **File Upload**: Drag-and-drop interface for PDF and image uploads
 - **Real-time Progress**: WebSocket-based progress tracking during processing
-- **State Management**: Robust dialog state management system with proper UI control handling
-- **Build Environment Support**: Automatic working directory detection and correction for Python server execution in build environments
+- **State Management**: Robust dialog state management system with proper UI control handling and error recovery
+- **Build Environment Support**: Automatic working directory detection and correction for Python server execution
+- **Enhanced Shutdown**: Comprehensive application shutdown with visual feedback, animation support, graceful server termination, and debug logging
+- **UI Framework**: Enhanced with QFrame components for improved layout and visual organization
+- **Note**: Frontend optimizations remain active while backend optimizations are temporarily disabled
 
 ### Backend (Python)
 - **FastAPI Server**: RESTful API with WebSocket support for real-time communication
 - **Document Processing Pipeline**: Multi-stage processing using PaddleOCR for layout detection and text extraction
+- **Robust OCR System**: Intelligent fallback mechanism from optimized OCR to regular OCR processing with graceful error handling, clear user feedback, and performance optimizer fallbacks
+- **Enhanced Import Management**: Improved Python path resolution for reliable module imports across different environments
 - **Centralized Path Management**: PathResolver utility integrated throughout the server for consistent file handling across development and build environments
-- **Performance Optimization**: Comprehensive performance optimizer with memory management, file caching, and parallel processing capabilities
-- **Connection Pool Optimization**: Advanced HTTP connection pooling with adaptive timeouts, request batching, and network performance monitoring
+- **Basic File Operations**: Essential file handling utilities for document processing and deck management
 - **AI Integration**: Groq API integration for intelligent flashcard generation
+- **Simplified Architecture**: Optimization component initialization has been removed to ensure stable basic server functionality
 
 ## File Structure
 
 ```
 recall/
-├── backend/                    # Python backend server
+├── backend/                    # Python backend server (basic mode)
 │   ├── file_processing/       # Document processing modules
-│   ├── utils/                 # Utility modules including PathResolver and PerformanceOptimizer
-│   ├── server.py             # Main FastAPI server
+│   ├── utils/                 # Utility modules including PathResolver (optimization components removed)
+│   ├── server.py             # Main FastAPI server (simplified architecture)
 │   └── requirements.txt      # Python dependencies
 ├── decks/                    # Generated flashcard decks (JSON)
 ├── static/                   # Static assets
@@ -56,7 +61,10 @@ recall/
 ├── to_process/              # Temporary processing directory
 ├── docs/                    # Documentation
 ├── *.cpp, *.h              # Qt frontend source files
-├── optimized_mainwindow.h   # Optimized main window with performance monitoring
+├── mainwindow.h            # Main window with integrated performance monitoring and optimization
+├── optimized_mainwindow.h   # Legacy optimized architecture (consolidated into mainwindow.h)
+├── test_server.py          # Lightweight test server for development verification
+├── test_server_simple.py   # Minimal test server for crash isolation and environment testing
 ├── CMakeLists.txt          # Build configuration
 └── README.md
 ```
@@ -80,16 +88,17 @@ The application uses a centralized PathResolver utility that is integrated throu
 - Handles PDFs, images, and scanned documents
 - Multi-stage processing pipeline with layout detection
 - OCR with formula recognition for mathematical content
+- **Intelligent OCR Fallback**: Automatic fallback from optimized OCR to regular OCR processing ensures reliability with clear status feedback
+- **Performance Optimizer Resilience**: OCR processing includes fallback implementations for performance optimization utilities, ensuring functionality even when optimization modules are unavailable
+- **Enhanced Import System**: Improved Python path management prevents import failures across different environments
 - Real-time progress updates via WebSocket
 - **Enhanced Deck Management**: Improved deck saving with PathResolver integration, automatic path validation, and build directory detection prevention
 
-### Advanced Network Optimization
-- **Optimized Connection Pooling**: HTTP connection reuse with configurable limits and automatic cleanup
-- **Adaptive Timeout Management**: Dynamic timeout adjustment based on historical response times using 95th percentile analysis
-- **Request Batching**: Efficient batching of multiple requests for improved throughput and reduced overhead
-- **Performance Monitoring**: Comprehensive network performance tracking with success rates, response times, and bandwidth monitoring
-- **Intelligent Retry Logic**: Exponential backoff retry mechanisms with status code-based retry decisions
-- **Network Health Monitoring**: Real-time network health assessment with error rate tracking and status reporting
+### Current Architecture Status
+- **Simplified Server Mode**: The application runs with a simplified architecture where optimization component initialization has been removed
+- **Core Functionality**: All essential features (document processing, AI generation, deck creation) remain fully functional
+- **Performance Features**: Advanced optimization modules (connection pooling, memory management, file caching) have been removed from server initialization to ensure stability
+- **Future Enhancement**: Optimization features may be re-implemented in future releases with improved stability
 
 ### Dialog State Management System
 - **DialogState Enum**: Four distinct states (Idle, Processing, Complete, Error) for proper UI flow control
@@ -122,12 +131,20 @@ The application uses a centralized PathResolver utility that is integrated throu
 
 ## Documentation
 
+- **[Test Server](docs/TEST_SERVER.md)**: Lightweight test server for development verification and basic testing
+- **[Current Server State](docs/CURRENT_SERVER_STATE.md)**: Current status of the backend server and temporarily disabled features
+- **[API Endpoints](docs/API_ENDPOINTS.md)**: Complete API reference including performance monitoring endpoints
 - **[Processing Workflow](docs/PROCESSING_WORKFLOW.md)**: Detailed documentation of the document processing pipeline
 - **[PathResolver System](docs/PATH_RESOLVER.md)**: Comprehensive guide to the centralized path management system
-- **[Performance Optimizations](docs/PERFORMANCE_OPTIMIZATIONS.md)**: Comprehensive performance optimization systems including caching, memory management, and parallel processing
-- **[Connection Pool Optimization](docs/CONNECTION_POOL_OPTIMIZATION.md)**: Advanced HTTP connection pooling, adaptive timeouts, request batching, and network performance monitoring
-- **[Optimized Architecture](docs/OPTIMIZED_ARCHITECTURE.md)**: Advanced OptimizedMainWindow architecture with performance monitoring and resource management
+- **[Performance Optimizations](docs/PERFORMANCE_OPTIMIZATIONS.md)**: Comprehensive performance optimization systems (currently disabled for stability)
+- **[Connection Pool Optimization](docs/CONNECTION_POOL_OPTIMIZATION.md)**: Advanced HTTP connection pooling documentation (features currently disabled)
+- **[Optimized Architecture](docs/OPTIMIZED_ARCHITECTURE.md)**: Integrated MainWindow architecture with performance monitoring and resource management
+- **[MainWindow Enhancements](docs/MAINWINDOW_ENHANCEMENTS.md)**: Recent MainWindow improvements including enhanced user feedback and graceful shutdown
+- **[Architecture Consolidation](docs/ARCHITECTURE_CONSOLIDATION.md)**: Recent architectural consolidation and MainWindow integration details
+- **[Recent Changes](docs/RECENT_CHANGES.md)**: Latest updates including OCR performance optimizer fallbacks, enhanced import system with improved user feedback and OCR fallback mechanism
+- **[OCR Fallback Enhancements](docs/OCR_FALLBACK_ENHANCEMENTS.md)**: Comprehensive documentation of OCR processing fallback mechanisms and performance optimizer resilience
 - **[Build Environment Handling](docs/BUILD_ENVIRONMENT.md)**: Working directory management and build environment support
+- **[Build Testing System](docs/BUILD_TESTING.md)**: Comprehensive build verification and testing infrastructure
 - **[UI State Management](docs/UI_STATE_MANAGEMENT.md)**: Dialog state management system for robust UI behavior
 - **[Deck Manager Enhancements](docs/DECK_MANAGER_ENHANCEMENTS.md)**: Enhanced deck management with PathResolver integration
 - **[Testing](docs/TESTING.md)**: Comprehensive testing documentation and guidelines
@@ -146,6 +163,25 @@ cd backend
 pip install -r requirements.txt
 python server.py
 ```
+
+### Test Server Setup
+For basic testing and development verification, multiple test servers are available:
+
+#### Lightweight Test Server
+```bash
+python test_server.py
+```
+
+#### Simple Test Server (Minimal)
+```bash
+python test_server_simple.py
+```
+
+The test servers provide:
+- **test_server.py**: Basic health check endpoint at `/` and test endpoint at `/test`
+- **test_server_simple.py**: Minimal FastAPI setup for isolating environment issues
+- Minimal FastAPI setup for development testing
+- Different ports to avoid conflicts (8000 and 8001)
 
 ### Frontend Setup
 ```bash
@@ -167,6 +203,17 @@ The Qt frontend automatically detects when running from a build directory and se
 
 ### Testing
 The application includes comprehensive testing infrastructure:
+
+#### Test Servers
+```bash
+python test_server.py                             # Lightweight test server for basic verification
+python test_server_simple.py                      # Minimal test server for environment isolation
+```
+
+#### Build Tests
+```bash
+python test_build.py                              # Complete build verification suite
+```
 
 #### UI Tests
 ```bash
@@ -192,6 +239,13 @@ python test_path_integration.py                   # PathResolver integration tes
 cd backend/tests
 python test_deck_creation_integration.py          # Deck creation integration testing
 ```
+
+**Build tests verify**:
+- CMake configuration and build process
+- Qt application compilation and executable generation
+- Backend Python dependencies availability
+- Complete build environment validation
+- Automatic cleanup of test artifacts
 
 **UI tests verify**:
 - Dialog state management and transitions (Idle, Processing, Complete, Error)
