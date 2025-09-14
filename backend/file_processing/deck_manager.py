@@ -135,7 +135,7 @@ def save_deck_to_file(deck: Dict[str, Any], decks_dir: Optional[str] = None) -> 
     
     Args:
         deck: The deck dictionary to save
-        decks_dir: Directory to save the deck, uses absolute path from app config if None
+        decks_dir: Directory to save the deck, uses PathResolver if None
         
     Returns:
         Path to the saved deck file
@@ -143,11 +143,24 @@ def save_deck_to_file(deck: Dict[str, Any], decks_dir: Optional[str] = None) -> 
     # Import utility function for directory creation
     from utils.file_operations import ensure_dir
     
-    # If no decks directory specified, get the global one from app configuration
+    # If no decks directory specified, use PathResolver to get the correct path
     if decks_dir is None:
-        # Get the application base directory
-        app_base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        decks_dir = os.path.join(app_base_dir, "decks")
+        if path_config:
+            # Use PathResolver to get the correct decks directory
+            decks_dir = path_config.decks_dir
+            logger.info(f"Using PathResolver decks directory: {decks_dir}")
+        else:
+            # Fallback: Get the application base directory
+            app_base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            decks_dir = os.path.join(app_base_dir, "decks")
+            logger.warning(f"PathResolver not available, using fallback decks directory: {decks_dir}")
+    
+    # Ensure the decks directory is absolute
+    if not os.path.isabs(decks_dir):
+        if path_config:
+            decks_dir = os.path.join(path_config.project_root, decks_dir)
+        else:
+            decks_dir = os.path.abspath(decks_dir)
     
     # Create decks directory if it doesn't exist
     ensure_dir(decks_dir)
@@ -155,6 +168,16 @@ def save_deck_to_file(deck: Dict[str, Any], decks_dir: Optional[str] = None) -> 
     # Use the deck_id for the filename
     deck_id = deck["metadata"]["deck_id"]
     deck_path = os.path.join(decks_dir, f"{deck_id}.json")
+    
+    # Verify the path is correct (not in build directory)
+    if "build" in deck_path.lower():
+        logger.error(f"ERROR: Deck path contains 'build' directory: {deck_path}")
+        if path_config:
+            # Force use of PathResolver path
+            corrected_path = os.path.join(path_config.decks_dir, f"{deck_id}.json")
+            logger.info(f"Correcting deck path to: {corrected_path}")
+            deck_path = corrected_path
+            ensure_dir(os.path.dirname(deck_path))
     
     # Save the deck to a file - keep the original format exactly as provided
     with open(deck_path, "w", encoding="utf-8") as f:

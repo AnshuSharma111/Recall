@@ -76,8 +76,43 @@ MainWindow::MainWindow(QWidget *parent)
     
     // Start the server process
     QString pythonPath = "python";
-    QString scriptPath = "../../backend/server.py";
+    // Find the server.py script with more robust path handling
+    QString scriptPath = "";
+    QStringList possibleScriptPaths = {
+        "backend/server.py",                    // From app root
+        "../backend/server.py",                 // From build dir
+        "../../backend/server.py",              // From deeper build dir
+        appDirPath + "/backend/server.py",      // From executable dir
+        appDirPath + "/../backend/server.py"    // From executable dir up one level
+    };
+    
+    for (const QString &path : possibleScriptPaths) {
+        QFileInfo scriptCheck(path);
+        if (scriptCheck.exists() && scriptCheck.isFile()) {
+            scriptPath = scriptCheck.absoluteFilePath();
+            qDebug() << "Found server script at:" << scriptPath;
+            break;
+        }
+    }
+    
+    if (scriptPath.isEmpty()) {
+        qDebug() << "Could not find server.py script. Defaulting to ../../backend/server.py";
+        scriptPath = "../../backend/server.py";
+    }
 
+    // Set the working directory to the project root (parent of build directory)
+    // This ensures the Python server runs from the correct location
+    QString workingDir = QDir::current().absolutePath();
+    if (workingDir.contains("build")) {
+        // We're running from build directory, go up to project root
+        QDir buildDir(workingDir);
+        buildDir.cdUp(); // Go up one level from build/Desktop_Qt_6_9_0_MinGW_64_bit-Debug
+        buildDir.cdUp(); // Go up one more level to project root
+        workingDir = buildDir.absolutePath();
+        qDebug() << "Setting Python server working directory to project root:" << workingDir;
+    }
+    
+    process->setWorkingDirectory(workingDir);
     process->start(pythonPath, QStringList() << scriptPath);
 
     if (!process->waitForStarted(5000)) {

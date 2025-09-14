@@ -57,7 +57,12 @@ else()
     endif()
 endif()
 
-target_link_libraries(Recall PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::Gui Qt${QT_VERSION_MAJOR}::Core)
+target_link_libraries(Recall PRIVATE 
+    Qt${QT_VERSION_MAJOR}::Widgets 
+    Qt${QT_VERSION_MAJOR}::Network 
+    Qt${QT_VERSION_MAJOR}::Gui 
+    Qt${QT_VERSION_MAJOR}::Core
+)
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
 # If you are developing for iOS or macOS you should consider setting an
@@ -82,4 +87,11 @@ install(TARGETS Recall
 
 if(QT_VERSION_MAJOR EQUAL 6)
     qt_finalize_executable(Recall)
+endif()
+
+# Optional: Enable testing
+option(BUILD_TESTS "Build the test suite" OFF)
+if(BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
 endif()

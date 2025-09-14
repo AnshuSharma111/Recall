@@ -6,8 +6,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QFile>
+#include <QTimer>
 
-CreateDeckDialog::CreateDeckDialog(QWidget *parent) : QDialog(parent), currentReply(nullptr)
+CreateDeckDialog::CreateDeckDialog(QWidget *parent) : QDialog(parent), currentReply(nullptr), statusReply(nullptr), processingComplete(false), deckId(""), pollingCounter(0), consecutiveErrorCount(0), backgroundModeOffered(false), currentState(DialogState::Idle), basePollingInterval(2000), maxPollingInterval(10000), currentPollingInterval(2000)
 {
     setWindowTitle("Create New Deck");
     setMinimumSize(600, 500);
@@ -21,12 +22,64 @@ CreateDeckDialog::CreateDeckDialog(QWidget *parent) : QDialog(parent), currentRe
     connect(addFilesButton, &QPushButton::clicked, this, &CreateDeckDialog::onAddFilesClicked);
     connect(removeFileButton, &QPushButton::clicked, this, &CreateDeckDialog::onRemoveFileClicked);
     connect(createDeckButton, &QPushButton::clicked, this, &CreateDeckDialog::onCreateDeckClicked);
-    connect(cancelButton, &QPushButton::clicked, this, &QDialog::reject);
+    connect(cancelButton, &QPushButton::clicked, this, [this]() {
+        if (currentState == DialogState::Processing) {
+            // Handle cancellation during processing
+            if (QMessageBox::question(this, "Cancel Processing", 
+                                    "Are you sure you want to cancel deck creation?",
+                                    QMessageBox::Yes | QMessageBox::No) == QMessageBox::Yes) {
+                
+                // Stop any ongoing operations
+                stopStatusPolling();
+                
+                if (currentReply) {
+                    currentReply->abort();
+                    currentReply = nullptr;
+                }
+                
+                if (statusReply) {
+                    statusReply->abort();
+                    statusReply = nullptr;
+                }
+                
+                // Reset to idle state and close
+                setState(DialogState::Idle);
+                QDialog::reject();
+            }
+        } else {
+            // Normal cancel/close behavior
+            QDialog::reject();
+        }
+    });
     connect(titleEdit, &QLineEdit::textChanged, this, &CreateDeckDialog::updateCreateButtonState);
     connect(fileListWidget, &QListWidget::itemSelectionChanged, this, &CreateDeckDialog::updateCreateButtonState);
     
-    // Initial button state
+    // Create status polling timer
+    statusTimer = new QTimer(this);
+    connect(statusTimer, &QTimer::timeout, this, &CreateDeckDialog::checkProcessingStatus);
+    connect(statusTimer, &QTimer::timeout, this, &CreateDeckDialog::checkProcessingStatus);
+    
+    // Initial button state and UI state
     updateCreateButtonState();
+    setState(DialogState::Idle);
+}
+
+CreateDeckDialog::~CreateDeckDialog()
+{
+    // Ensure proper cleanup of network resources
+    stopStatusPolling();
+    
+    if (currentReply) {
+        currentReply->abort();
+        currentReply->deleteLater();
+        currentReply = nullptr;
+    }
+    
+    if (statusReply) {
+        statusReply->abort();
+        statusReply->deleteLater();
+        statusReply = nullptr;
+    }
 }
 
 void CreateDeckDialog::setupUI()
@@ -170,8 +223,15 @@ void CreateDeckDialog::setupUI()
     statusLabel->setAlignment(Qt::AlignCenter);
     statusLabel->setStyleSheet("color: #BB86FC; margin-top: 8px;");
     
+    progressLabel = new QLabel(this);
+    progressLabel->setVisible(false);
+    progressLabel->setAlignment(Qt::AlignCenter);
+    progressLabel->setStyleSheet("color: #03DAC6; margin-top: 8px; font-weight: bold;");
+    progressLabel->setWordWrap(true);
+    
     mainLayout->addWidget(uploadProgressBar);
     mainLayout->addWidget(statusLabel);
+    mainLayout->addWidget(progressLabel);
     
     // Bottom buttons
     QHBoxLayout *bottomButtonsLayout = new QHBoxLayout();
@@ -355,19 +415,9 @@ void CreateDeckDialog::onCreateDeckClicked()
         return;
     }
     
-    // Disable UI elements during upload
-    titleEdit->setEnabled(false);
-    fileListWidget->setEnabled(false);
-    addFilesButton->setEnabled(false);
-    removeFileButton->setEnabled(false);
-    createDeckButton->setEnabled(false);
-    cancelButton->setEnabled(false);
-    
-    // Show progress UI
-    uploadProgressBar->setValue(0);
-    uploadProgressBar->setVisible(true);
-    statusLabel->setText("Preparing files...");
-    statusLabel->setVisible(true);
+    // Set processing state - this will handle UI updates
+    setState(DialogState::Processing);
+    processingComplete = false;
     
     // Create multipart request
     QHttpMultiPart *multiPart = new QHttpMultiPart(QHttpMultiPart::FormDataType);
@@ -445,13 +495,7 @@ void CreateDeckDialog::onNetworkReplyFinished()
         return;
     }
     
-    // Re-enable UI elements
-    titleEdit->setEnabled(true);
-    fileListWidget->setEnabled(true);
-    addFilesButton->setEnabled(true);
-    removeFileButton->setEnabled(true);
-    updateCreateButtonState();
-    cancelButton->setEnabled(true);
+    // Note: UI state will be managed by setState() calls below
     
     // Read the response data
     QByteArray responseData = currentReply->readAll();
@@ -460,31 +504,32 @@ void CreateDeckDialog::onNetworkReplyFinished()
     QString errorMessage = "Unknown error occurred.";
     
     if (currentReply->error() == QNetworkReply::NoError) {
-        // Success
-        statusLabel->setText("Deck created successfully!");
-        statusLabel->setStyleSheet("color: #03DAC6; margin-top: 8px;");
-        
+        // Success - files uploaded, now processing
         QJsonDocument jsonDoc = QJsonDocument::fromJson(responseData);
         QJsonObject jsonObj = jsonDoc.object();
         
-        // Show success message and close dialog after a delay
-        QMessageBox::information(this, "Success", 
-                              "Deck '" + titleEdit->text() + "' has been created successfully!\n\n" +
-                              "The deck will now be processed on the server.");
-        
-        accept(); // Close the dialog with success result
+        // Extract the deck ID from the response for status polling
+        if (jsonObj.contains("deck_id")) {
+            deckId = jsonObj["deck_id"].toString();
+            
+            // Update status messages for processing phase
+            statusLabel->setText("Processing deck...");
+            progressLabel->setText("Files uploaded successfully. Processing deck...");
+            
+            // Start polling for status
+            startStatusPolling();
+        } else {
+            // No deck ID in response - this is an error
+            setState(DialogState::Error);
+            statusLabel->setText("Error: No deck ID received from server");
+            progressLabel->setText("The server did not provide a deck ID. Please try again.");
+        }
         
     } else {
-        // Handle error
-        statusLabel->setText("Error: " + currentReply->errorString() + " (Status: " + QString::number(statusCode) + ")");
-        statusLabel->setStyleSheet("color: #CF6679; margin-top: 8px;");
+        // Handle error - set error state
+        setState(DialogState::Error);
         
-        // Display detailed error information for debugging
-        QString debugInfo = "Error details:\n";
-        debugInfo += "Status code: " + QString::number(statusCode) + "\n";
-        debugInfo += "Error string: " + currentReply->errorString() + "\n";
-        debugInfo += "Raw response: " + QString(responseData);
-        
+        // Parse error message from response
         QJsonDocument jsonDoc = QJsonDocument::fromJson(responseData);
         QJsonObject jsonObj = jsonDoc.object();
         
@@ -500,9 +545,16 @@ void CreateDeckDialog::onNetworkReplyFinished()
             }
         }
         
-        QMessageBox::critical(this, "Error", "Could not create deck: " + errorMessage + "\n\n" + debugInfo);
+        statusLabel->setText("Upload failed: " + currentReply->errorString());
+        progressLabel->setText(errorMessage);
         
-        uploadProgressBar->setVisible(false);
+        // Display detailed error information for debugging
+        QString debugInfo = "Error details:\n";
+        debugInfo += "Status code: " + QString::number(statusCode) + "\n";
+        debugInfo += "Error string: " + currentReply->errorString() + "\n";
+        debugInfo += "Raw response: " + QString(responseData);
+        
+        QMessageBox::critical(this, "Error", "Could not create deck: " + errorMessage + "\n\n" + debugInfo);
     }
     
     currentReply->deleteLater();
@@ -514,6 +566,211 @@ void CreateDeckDialog::dragEnterEvent(QDragEnterEvent *event)
     if (event->mimeData()->hasUrls()) {
         event->acceptProposedAction();
     }
+}
+
+void CreateDeckDialog::startStatusPolling()
+{
+    if (deckId.isEmpty()) {
+        return;
+    }
+    
+    // Reset polling parameters
+    currentPollingInterval = basePollingInterval;
+    pollingCounter = 0;
+    consecutiveErrorCount = 0;
+    
+    // Start with base polling interval
+    statusTimer->start(currentPollingInterval);
+    
+    // Initial check
+    checkProcessingStatus();
+}
+
+void CreateDeckDialog::stopStatusPolling()
+{
+    statusTimer->stop();
+    
+    // Cancel any pending status request
+    if (statusReply) {
+        statusReply->abort();
+        statusReply->deleteLater();
+        statusReply = nullptr;
+    }
+    
+    // Reset polling parameters
+    currentPollingInterval = basePollingInterval;
+    pollingCounter = 0;
+    consecutiveErrorCount = 0;
+}
+
+void CreateDeckDialog::checkProcessingStatus()
+{
+    if (deckId.isEmpty() || processingComplete) {
+        stopStatusPolling();
+        return;
+    }
+    
+    // Don't make a new request if one is already in progress
+    if (statusReply) {
+        return;
+    }
+    
+    QNetworkRequest request(QUrl(QString("http://127.0.0.1:8000/api/deck/%1/status").arg(deckId)));
+    request.setRawHeader("X-API-Key", "key1");
+    
+    // Set timeout for the request (30 seconds)
+    request.setTransferTimeout(30000);
+    
+    statusReply = networkManager->get(request);
+    connect(statusReply, &QNetworkReply::finished, this, &CreateDeckDialog::onStatusCheckFinished);
+}
+
+void CreateDeckDialog::onStatusCheckFinished()
+{
+    if (!statusReply) {
+        return;
+    }
+    
+    // Increment the polling counter
+    pollingCounter++;
+    
+    if (statusReply->error() == QNetworkReply::NoError) {
+        QByteArray responseData = statusReply->readAll();
+        QJsonDocument jsonDoc = QJsonDocument::fromJson(responseData);
+        QJsonObject jsonObj = jsonDoc.object();
+        
+        QString status = jsonObj["status"].toString();
+        QString message = jsonObj["message"].toString();
+        
+        // Reset consecutive error counter since we got a valid response
+        consecutiveErrorCount = 0;
+        
+        // Implement adaptive polling - increase interval for long-running processes
+        if (pollingCounter > 10 && status.toLower() == "processing") {
+            // Gradually increase polling interval to reduce server load
+            currentPollingInterval = qMin(maxPollingInterval, 
+                                        static_cast<int>(basePollingInterval * (1 + pollingCounter / 20.0)));
+            statusTimer->setInterval(currentPollingInterval);
+        }
+        
+        // Update UI with status message and polling information
+        QString statusMsg = message;
+        
+        // Add a note about long-running processes after a number of polls
+        if (pollingCounter > 15 && status.toLower() == "processing") {
+            statusMsg += " (Still processing... this may take a while)";
+            
+            // For very long-running processes, show additional information
+            if (pollingCounter > 30) {
+                statusMsg += "\nThis is taking longer than expected.";
+            }
+            
+            // After a very long time, offer the option to continue in background
+            if (pollingCounter > 60) {
+                if (!backgroundModeOffered) {
+                    backgroundModeOffered = true;
+                    QMessageBox::StandardButton response = QMessageBox::question(this, "Long Process", 
+                                          "This process is taking a very long time. Would you like to continue in the background?",
+                                          QMessageBox::Yes | QMessageBox::No);
+                                          
+                    if (response == QMessageBox::Yes) {
+                        // User chose to continue in background
+                        QMessageBox::information(this, "Background Processing", 
+                                             "Deck creation will continue in the background. You can check for new decks by refreshing the deck grid.");
+                        
+                        // Stop polling and close dialog gracefully
+                        stopStatusPolling();
+                        QDialog::accept();
+                        return;
+                    } else {
+                        // User chose to continue waiting - reset the counter to prevent asking again too soon
+                        // but still keep track that we've offered background mode
+                        pollingCounter = 40; // Reset to a lower count but not completely
+                        statusMsg += "\nContinuing in foreground. You can cancel at any time.";
+                    }
+                }
+            }
+        }
+        
+        progressLabel->setText(statusMsg);
+        progressLabel->setStyleSheet("color: #03DAC6; margin-top: 8px;");
+        progressLabel->setVisible(true);
+        
+        // Check if processing is complete
+        if (isCompletionStatus(status)) {
+            processingComplete = true;
+            
+            // Stop polling
+            stopStatusPolling();
+            
+            // Check if it was successful or failed
+            if (status.toLower() == "complete") {
+                setState(DialogState::Complete);
+                
+                // Show success message
+                QMessageBox::information(this, "Success", 
+                                     "Deck '" + titleEdit->text() + "' has been created successfully!");
+                                     
+                // Close the dialog with success
+                QDialog::accept();
+            } else if (status.toLower() == "failed") {
+                setState(DialogState::Error);
+                statusLabel->setText("Deck creation failed");
+                progressLabel->setText("Error: " + message);
+                
+                // Show error message
+                QMessageBox::critical(this, "Error", 
+                                   "Failed to create deck: " + message);
+            }
+        }
+    } else {
+        // Handle error
+        consecutiveErrorCount++;
+        
+        QString errorMsg = "Error checking status: " + statusReply->errorString();
+        
+        // After several consecutive errors, give more detailed information
+        if (consecutiveErrorCount > 3) {
+            errorMsg += "\nThere might be an issue with the server. Check if the server is running.";
+        }
+        
+        // After many consecutive errors, offer to cancel or continue
+        if (consecutiveErrorCount > 10) {
+            if (QMessageBox::question(this, "Connection Issues", 
+                                  "Unable to connect to the server after multiple attempts.\nWould you like to cancel deck creation?",
+                                  QMessageBox::Yes | QMessageBox::No) == QMessageBox::Yes) {
+                // User chose to cancel - set error state
+                setState(DialogState::Error);
+                statusLabel->setText("Connection failed");
+                progressLabel->setText("Unable to connect to server. Deck creation cancelled.");
+                return;
+            } else {
+                // Reset counter to avoid asking too frequently
+                consecutiveErrorCount = 4;
+            }
+        }
+        
+        // Update progress label with error message but stay in processing state
+        progressLabel->setText(errorMsg);
+        progressLabel->setStyleSheet("color: #CF6679; margin-top: 8px; font-weight: bold;");
+        
+        // If there's an error, continue polling but at a slower rate
+        // Implement exponential backoff for errors
+        int errorInterval = qMin(maxPollingInterval, basePollingInterval * (1 + consecutiveErrorCount));
+        statusTimer->setInterval(errorInterval);
+    }
+    
+    statusReply->deleteLater();
+    statusReply = nullptr;
+}
+
+bool CreateDeckDialog::isCompletionStatus(const QString &status)
+{
+    QString lowerStatus = status.toLower();
+    
+    // Consider both "complete" and "failed" as completion statuses
+    // This allows the dialog to close even if there's an error
+    return lowerStatus == "complete" || lowerStatus == "failed";
 }
 
 void CreateDeckDialog::dropEvent(QDropEvent *event)
@@ -533,3 +790,98 @@ void CreateDeckDialog::dropEvent(QDropEvent *event)
     
     event->acceptProposedAction();
 }
+
+void CreateDeckDialog::setState(DialogState newState)
+{
+    if (currentState == newState) {
+        return; // No change needed
+    }
+    
+    currentState = newState;
+    updateUIForState();
+}
+
+void CreateDeckDialog::enableControls(bool enabled)
+{
+    titleEdit->setEnabled(enabled);
+    fileListWidget->setEnabled(enabled);
+    addFilesButton->setEnabled(enabled);
+    removeFileButton->setEnabled(enabled);
+    
+    // Create button has special logic based on state and validation
+    if (enabled && currentState == DialogState::Idle) {
+        updateCreateButtonState(); // Use existing validation logic
+    } else {
+        createDeckButton->setEnabled(false);
+    }
+}
+
+void CreateDeckDialog::updateUIForState()
+{
+    switch (currentState) {
+        case DialogState::Idle:
+            enableControls(true);
+            cancelButton->setEnabled(true);
+            cancelButton->setText("Cancel");
+            
+            // Hide progress elements
+            uploadProgressBar->setVisible(false);
+            statusLabel->setVisible(false);
+            progressLabel->setVisible(false);
+            
+            // Reset progress bar
+            uploadProgressBar->setValue(0);
+            break;
+            
+        case DialogState::Processing:
+            enableControls(false);
+            cancelButton->setEnabled(true);
+            cancelButton->setText("Cancel");
+            
+            // Show progress elements
+            uploadProgressBar->setVisible(true);
+            statusLabel->setVisible(true);
+            progressLabel->setVisible(true);
+            
+            // Set initial processing messages
+            statusLabel->setText("Processing...");
+            statusLabel->setStyleSheet("color: #BB86FC; margin-top: 8px;");
+            progressLabel->setText("Preparing files...");
+            progressLabel->setStyleSheet("color: #03DAC6; margin-top: 8px; font-weight: bold;");
+            break;
+            
+        case DialogState::Complete:
+            enableControls(false);
+            cancelButton->setEnabled(true);
+            cancelButton->setText("Done");
+            
+            // Show success state
+            statusLabel->setText("Deck created successfully!");
+            statusLabel->setStyleSheet("color: #03DAC6; margin-top: 8px;");
+            progressLabel->setText("Your deck is ready to use.");
+            progressLabel->setStyleSheet("color: #03DAC6; margin-top: 8px; font-weight: bold;");
+            
+            // Keep progress elements visible to show completion
+            uploadProgressBar->setVisible(true);
+            uploadProgressBar->setValue(100);
+            statusLabel->setVisible(true);
+            progressLabel->setVisible(true);
+            break;
+            
+        case DialogState::Error:
+            enableControls(true);
+            cancelButton->setEnabled(true);
+            cancelButton->setText("Close");
+            
+            // Show error state
+            statusLabel->setStyleSheet("color: #CF6679; margin-top: 8px;");
+            progressLabel->setStyleSheet("color: #CF6679; margin-top: 8px; font-weight: bold;");
+            
+            // Keep progress elements visible to show error
+            uploadProgressBar->setVisible(true);
+            statusLabel->setVisible(true);
+            progressLabel->setVisible(true);
+            break;
+    }
+}
+

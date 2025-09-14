@@ -17,6 +17,7 @@ import re
 import json
 import fnmatch
 import uuid
+import time
 from datetime import datetime
 from typing import List, Dict, Set, Optional, Tuple, Union, Callable
 import glob
@@ -394,6 +395,7 @@ def safe_move_images(src_dir: str, dest_dir: str, extensions: Optional[List[str]
 def cleanup_processing_dir(base_dir: str, keep_subdirs: Optional[List[str]] = None, deck_id: Optional[str] = None) -> bool:
     """
     Cleanup processing directory after completion, keeping specified subdirectories.
+    Enhanced with better memory management and temporary file cleanup.
     
     Args:
         base_dir (str): Base directory to clean up
@@ -411,6 +413,33 @@ def cleanup_processing_dir(base_dir: str, keep_subdirs: Optional[List[str]] = No
         return True
     
     try:
+        # First, clean up any temporary files (files starting with tmp, temp, or ending with .tmp)
+        temp_patterns = ["**/tmp*", "**/temp*", "**/*.tmp", "**/*.temp", "**/.DS_Store", "**/Thumbs.db"]
+        
+        for pattern in temp_patterns:
+            temp_files = find_files(base_dir, pattern)
+            for temp_file in temp_files:
+                try:
+                    if os.path.isfile(temp_file):
+                        os.remove(temp_file)
+                        logger.debug(f"Removed temporary file: {temp_file}")
+                except Exception as e:
+                    logger.warning(f"Could not remove temporary file {temp_file}: {e}")
+        
+        # Clean up empty directories
+        for root, dirs, files in os.walk(base_dir, topdown=False):
+            for dir_name in dirs:
+                dir_path = os.path.join(root, dir_name)
+                try:
+                    if not os.listdir(dir_path):  # Directory is empty
+                        # Check if it's not in keep_subdirs
+                        rel_path = os.path.relpath(dir_path, base_dir)
+                        if not any(keep_dir in rel_path for keep_dir in keep_subdirs):
+                            os.rmdir(dir_path)
+                            logger.debug(f"Removed empty directory: {dir_path}")
+                except Exception as e:
+                    logger.debug(f"Could not remove directory {dir_path}: {e}")
+        
         # Get absolute paths of subdirectories to keep
         exclude_patterns = []
         for subdir in keep_subdirs:
@@ -419,11 +448,106 @@ def cleanup_processing_dir(base_dir: str, keep_subdirs: Optional[List[str]] = No
             exclude_patterns.append(f"**/{subdir}")
             
         # Delete everything except excluded patterns
-        return delete_dir(base_dir, exclude_patterns)
+        success = delete_dir(base_dir, exclude_patterns)
+        
+        if success:
+            logger.info(f"Successfully cleaned up processing directory: {base_dir}")
+        
+        return success
         
     except Exception as e:
         logger.error(f"Error cleaning up processing directory {base_dir}: {e}")
         return False
+
+def cleanup_large_files(directory: str, size_limit_mb: int = 100) -> bool:
+    """
+    Clean up large files in a directory to free memory and disk space.
+    
+    Args:
+        directory (str): Directory to scan for large files
+        size_limit_mb (int): Size limit in MB above which files are considered large
+    
+    Returns:
+        bool: True if cleanup was successful, False otherwise
+    """
+    if not os.path.exists(directory) or not os.path.isdir(directory):
+        logger.warning(f"Directory does not exist: {directory}")
+        return True
+    
+    size_limit_bytes = size_limit_mb * 1024 * 1024
+    cleaned_files = 0
+    total_freed = 0
+    
+    try:
+        for root, dirs, files in os.walk(directory):
+            for file in files:
+                file_path = os.path.join(root, file)
+                try:
+                    if os.path.isfile(file_path):
+                        file_size = os.path.getsize(file_path)
+                        if file_size > size_limit_bytes:
+                            # Check if it's a temporary or cache file
+                            file_lower = file.lower()
+                            if any(pattern in file_lower for pattern in ['.tmp', '.temp', '.cache', '.log']):
+                                os.remove(file_path)
+                                cleaned_files += 1
+                                total_freed += file_size
+                                logger.debug(f"Removed large temporary file: {file_path} ({file_size} bytes)")
+                except Exception as e:
+                    logger.debug(f"Could not process file {file_path}: {e}")
+        
+        if cleaned_files > 0:
+            logger.info(f"Cleaned up {cleaned_files} large files, freed {total_freed / (1024*1024):.2f} MB")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error cleaning up large files in {directory}: {e}")
+        return False
+
+def optimize_memory_usage():
+    """
+    Perform system-wide memory optimization by cleaning up temporary files
+    and clearing caches where possible.
+    """
+    try:
+        import gc
+        
+        # Force garbage collection
+        collected = gc.collect()
+        logger.debug(f"Garbage collection freed {collected} objects")
+        
+        # Try to import PathResolver and clear its cache
+        try:
+            from utils.path_resolver import PathResolver
+            PathResolver.clear_cache()
+            logger.debug("Cleared PathResolver cache")
+        except ImportError:
+            pass
+        
+        # Clean up temporary directories if they exist
+        import tempfile
+        temp_dir = tempfile.gettempdir()
+        
+        # Look for application-specific temp files
+        app_temp_patterns = ["recall_*", "paddle_*", "groq_*"]
+        for pattern in app_temp_patterns:
+            temp_files = find_files(temp_dir, pattern)
+            for temp_file in temp_files:
+                try:
+                    # Only remove files older than 1 hour
+                    if os.path.isfile(temp_file):
+                        file_age = time.time() - os.path.getmtime(temp_file)
+                        if file_age > 3600:  # 1 hour
+                            os.remove(temp_file)
+                            logger.debug(f"Removed old temp file: {temp_file}")
+                except Exception as e:
+                    logger.debug(f"Could not remove temp file {temp_file}: {e}")
+        
+        logger.info("Memory optimization completed")
+        
+    except Exception as e:
+        logger.error(f"Error during memory optimization: {e}")
         
 def merge_json_files(json_files: List[str], output_file: str, merge_key: Optional[str] = None) -> Optional[str]:
     """

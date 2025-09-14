@@ -8,7 +8,9 @@ bugs in the application.
 
 import os
 import logging
-from typing import Optional
+import time
+import threading
+from typing import Optional, Dict, Any
 from dataclasses import dataclass
 
 
@@ -47,26 +49,87 @@ class PathResolver:
     
     This class provides methods to determine the correct project root and resolve all
     application paths consistently, regardless of where the application is executed from.
+    
+    Features performance optimizations:
+    - Caching of resolved paths to avoid repeated calculations
+    - Thread-safe singleton implementation
+    - Cache invalidation based on file system changes
     """
     
     _instance: Optional['PathResolver'] = None
     _config: Optional[PathConfig] = None
+    _cache: Dict[str, Any] = {}
+    _cache_timestamps: Dict[str, float] = {}
+    _cache_ttl: float = 300.0  # 5 minutes cache TTL
+    _lock = threading.RLock()  # Reentrant lock for thread safety
     
     def __new__(cls) -> 'PathResolver':
-        """Singleton pattern to ensure consistent path resolution."""
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
+        """Thread-safe singleton pattern to ensure consistent path resolution."""
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)
+            return cls._instance
     
     def __init__(self):
         """Initialize the PathResolver if not already initialized."""
-        if self._config is None:
-            self._config = self._resolve_all_paths()
+        with self._lock:
+            if self._config is None:
+                self._config = self._resolve_all_paths()
     
-    @staticmethod
-    def get_project_root() -> str:
+    @classmethod
+    def _get_cached_value(cls, key: str, compute_func, *args, **kwargs) -> Any:
         """
-        Determine the project root directory regardless of execution context.
+        Get a cached value or compute it if not cached or expired.
+        
+        Args:
+            key: Cache key
+            compute_func: Function to compute the value if not cached
+            *args, **kwargs: Arguments to pass to compute_func
+            
+        Returns:
+            Cached or computed value
+        """
+        with cls._lock:
+            current_time = time.time()
+            
+            # Check if we have a valid cached value
+            if (key in cls._cache and 
+                key in cls._cache_timestamps and 
+                current_time - cls._cache_timestamps[key] < cls._cache_ttl):
+                return cls._cache[key]
+            
+            # Compute new value
+            value = compute_func(*args, **kwargs)
+            
+            # Cache the result
+            cls._cache[key] = value
+            cls._cache_timestamps[key] = current_time
+            
+            return value
+    
+    @classmethod
+    def _invalidate_cache(cls, key: Optional[str] = None):
+        """
+        Invalidate cache entries.
+        
+        Args:
+            key: Specific key to invalidate, or None to clear all cache
+        """
+        with cls._lock:
+            if key is None:
+                cls._cache.clear()
+                cls._cache_timestamps.clear()
+                logging.info("PathResolver cache cleared")
+            elif key in cls._cache:
+                del cls._cache[key]
+                if key in cls._cache_timestamps:
+                    del cls._cache_timestamps[key]
+                logging.debug(f"PathResolver cache invalidated for key: {key}")
+    
+    @classmethod
+    def _compute_project_root(cls) -> str:
+        """
+        Internal method to compute the project root directory.
         
         This method looks for project markers (CMakeLists.txt) to identify the
         true project root, working in both development and build environments.
@@ -84,9 +147,21 @@ class PathResolver:
             # Walk up the directory tree looking for project markers
             while current != os.path.dirname(current):  # Stop at filesystem root
                 # Look for CMakeLists.txt as the primary project marker
-                if os.path.exists(os.path.join(current, 'CMakeLists.txt')):
-                    logging.info(f"Found project root via CMakeLists.txt: {current}")
-                    return current
+                cmake_file = os.path.join(current, 'CMakeLists.txt')
+                if os.path.exists(cmake_file):
+                    # Check if this is a build directory by looking for build artifacts
+                    build_indicators = ['CMakeCache.txt', 'build.ninja', 'Makefile']
+                    is_build_dir = any(os.path.exists(os.path.join(current, indicator)) 
+                                     for indicator in build_indicators)
+                    
+                    if is_build_dir:
+                        logging.info(f"Found CMakeLists.txt in build directory, continuing search: {current}")
+                        # This is a build directory, continue searching
+                        current = os.path.dirname(current)
+                        continue
+                    else:
+                        logging.info(f"Found project root via CMakeLists.txt: {current}")
+                        return current
                 
                 # Also check for other project markers as fallback
                 markers = ['README.md', '.git', 'main.cpp']
@@ -106,14 +181,43 @@ class PathResolver:
                 logging.warning(f"Using environment variable for project root: {env_root}")
                 return env_root
             
-            # Last resort: Use current working directory
+            # Check current working directory as a potential project root
             cwd = os.getcwd()
+            cwd_cmake = os.path.join(cwd, 'CMakeLists.txt')
+            if os.path.exists(cwd_cmake):
+                # Check if CWD is a build directory
+                build_indicators = ['CMakeCache.txt', 'build.ninja', 'Makefile']
+                is_build_dir = any(os.path.exists(os.path.join(cwd, indicator)) 
+                                 for indicator in build_indicators)
+                
+                if not is_build_dir:
+                    logging.info(f"Using current working directory as project root: {cwd}")
+                    return cwd
+                else:
+                    logging.warning(f"Current working directory appears to be a build directory: {cwd}")
+            
+            # Last resort: Use current working directory anyway
             logging.warning(f"Falling back to current working directory: {cwd}")
             return cwd
             
         except Exception as e:
             logging.error(f"Path resolution failed: {e}")
             raise PathResolutionError(f"Cannot determine project root: {e}")
+    
+    @staticmethod
+    def get_project_root() -> str:
+        """
+        Determine the project root directory regardless of execution context.
+        
+        This method uses caching to avoid repeated file system operations.
+        
+        Returns:
+            str: Absolute path to the project root directory
+            
+        Raises:
+            PathResolutionError: If project root cannot be determined
+        """
+        return PathResolver._get_cached_value("project_root", PathResolver._compute_project_root)
     
     @classmethod
     def get_backend_dir(cls) -> str:
@@ -123,7 +227,8 @@ class PathResolver:
         Returns:
             str: Absolute path to the backend directory
         """
-        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return cls._get_cached_value("backend_dir", 
+                                   lambda: os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     
     @classmethod
     def get_decks_dir(cls) -> str:
@@ -133,7 +238,8 @@ class PathResolver:
         Returns:
             str: Absolute path to the decks directory
         """
-        return os.path.join(cls.get_project_root(), 'decks')
+        return cls._get_cached_value("decks_dir", 
+                                   lambda: os.path.join(cls.get_project_root(), 'decks'))
     
     @classmethod
     def get_static_dir(cls) -> str:
@@ -143,7 +249,8 @@ class PathResolver:
         Returns:
             str: Absolute path to the static directory
         """
-        return os.path.join(cls.get_project_root(), 'static')
+        return cls._get_cached_value("static_dir", 
+                                   lambda: os.path.join(cls.get_project_root(), 'static'))
     
     @classmethod
     def get_images_dir(cls) -> str:
@@ -153,7 +260,8 @@ class PathResolver:
         Returns:
             str: Absolute path to the images directory
         """
-        return os.path.join(cls.get_static_dir(), 'images')
+        return cls._get_cached_value("images_dir", 
+                                   lambda: os.path.join(cls.get_static_dir(), 'images'))
     
     @classmethod
     def get_processing_dir(cls) -> str:
@@ -163,7 +271,8 @@ class PathResolver:
         Returns:
             str: Absolute path to the processing directory
         """
-        return os.path.join(cls.get_project_root(), 'to_process')
+        return cls._get_cached_value("processing_dir", 
+                                   lambda: os.path.join(cls.get_project_root(), 'to_process'))
     
     @classmethod
     def get_logs_dir(cls) -> str:
@@ -173,7 +282,8 @@ class PathResolver:
         Returns:
             str: Absolute path to the logs directory
         """
-        return os.path.join(cls.get_backend_dir(), 'logs')
+        return cls._get_cached_value("logs_dir", 
+                                   lambda: os.path.join(cls.get_backend_dir(), 'logs'))
     
     @classmethod
     def resolve_path(cls, relative_path: str) -> str:
@@ -238,9 +348,23 @@ class PathResolver:
         Returns:
             PathConfig: The resolved path configuration
         """
-        if self._config is None:
-            self._config = self._resolve_all_paths()
-        return self._config
+        with self._lock:
+            if self._config is None:
+                self._config = self._resolve_all_paths()
+            return self._config
+    
+    @classmethod
+    def clear_cache(cls):
+        """
+        Clear all cached path values.
+        
+        This should be called if the file system structure changes
+        or if you need to force re-resolution of paths.
+        """
+        cls._invalidate_cache()
+        # Also clear the singleton's config to force re-resolution
+        if cls._instance is not None:
+            cls._instance._config = None
     
     def ensure_directory_exists(self, path: str) -> bool:
         """

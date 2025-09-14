@@ -33,7 +33,7 @@ except ImportError:
 # Function to encode an image to base64
 def encode_image(image_path: str) -> Optional[str]:
     """
-    Encode an image file to base64 string
+    Encode an image file to base64 string with memory optimization
     
     Args:
         image_path: Path to the image file
@@ -50,8 +50,20 @@ def encode_image(image_path: str) -> Optional[str]:
         return None
     
     try:
+        # Check file size before processing (limit to 10MB)
+        file_size = os.path.getsize(image_path)
+        if file_size > 10 * 1024 * 1024:  # 10MB limit
+            logger.warning(f"Image file too large ({file_size} bytes), skipping: {image_path}")
+            return None
+        
         with open(image_path, "rb") as image_file:
-            return base64.b64encode(image_file.read()).decode('utf-8')
+            image_data = image_file.read()
+            encoded = base64.b64encode(image_data).decode('utf-8')
+            
+            # Clean up image data from memory
+            del image_data
+            
+            return encoded
     except PermissionError:
         logger.error(f"Permission denied when reading image: {image_path}")
         return None
@@ -724,7 +736,7 @@ Return ONLY valid JSON without any explanation or markdown formatting.
         logger.error(f"Traceback: {traceback.format_exc()}")
         return None
         
-def process_document_questions(base_dir: str, deck_name: Optional[str] = None) -> Dict[str, Any]:
+def process_document_questions(base_dir: str, deck_name: Optional[str] = None, deck_id: Optional[str] = None) -> Dict[str, Any]:
     """
     Process all document directories in the given base directory to generate questions
     from the OCR JSON files.
@@ -732,6 +744,7 @@ def process_document_questions(base_dir: str, deck_name: Optional[str] = None) -
     Args:
         base_dir (str): Base directory containing document folders with OCR results
         deck_name (Optional[str]): Name for the unified deck. If not provided, uses "Untitled Deck"
+        deck_id (Optional[str]): Specific deck ID to use. If not provided, generates a new one
         
     Returns:
         Dict[str, Any]: Information about the generated questions and deck with the following structure:
@@ -894,8 +907,12 @@ def process_document_questions(base_dir: str, deck_name: Optional[str] = None) -
             # Import the deck manager module
             from .deck_manager import generate_unique_deck_id, create_unified_deck, save_deck_to_file
             
-            # Generate a unique deck ID
-            deck_id = generate_unique_deck_id()
+            # Use provided deck ID or generate a unique one
+            if deck_id is None:
+                deck_id = generate_unique_deck_id()
+                logger.info(f"Generated new deck ID: {deck_id}")
+            else:
+                logger.info(f"Using provided deck ID: {deck_id}")
             
             # Import the image utility functions and our file operations utilities
             try:
@@ -1006,11 +1023,17 @@ def process_document_questions(base_dir: str, deck_name: Optional[str] = None) -
                 deck_id=deck_id
             )
             
-            # Find the absolute path to the project root (two levels up from this file)
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            decks_dir = os.path.join(project_root, "decks")
+            # Use PathResolver to get the correct decks directory
+            if path_config:
+                decks_dir = path_config.decks_dir
+                logger.info(f"Using PathResolver decks directory: {decks_dir}")
+            else:
+                # Fallback: Find the absolute path to the project root (two levels up from this file)
+                project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                decks_dir = os.path.join(project_root, "decks")
+                logger.warning(f"PathResolver not available, using fallback decks directory: {decks_dir}")
             
-            # Save the deck to the absolute decks directory
+            # Save the deck to the correct decks directory (PathResolver will handle the path)
             deck_path = save_deck_to_file(unified_deck, decks_dir=decks_dir)
             
             # Add the unified deck info to the results

@@ -130,7 +130,15 @@ def process_json_file(json_path: str, img_path: str, res_dir: str) -> str:
 
     # load json data
     json_data = load_json_boxes(json_path)
+    
+    # Load image with memory optimization
     image = cv2.imread(img_path)
+    if image is None:
+        raise ValueError(f"Could not load image: {img_path}")
+    
+    # Get image dimensions for memory management
+    img_height, img_width = image.shape[:2]
+    logger.debug(f"Processing image {img_path} with dimensions {img_width}x{img_height}") #type: ignore
     
     # Create output directory if it doesn't exist
     os.makedirs(res_dir, exist_ok=True)
@@ -177,6 +185,11 @@ def process_json_file(json_path: str, img_path: str, res_dir: str) -> str:
         
         # Crop the image for processing
         cropped = crop_image(image, coordinate)
+        
+        # Skip processing if cropped image is too small or invalid
+        if cropped is None or cropped.size == 0 or cropped.shape[0] < 10 or cropped.shape[1] < 10:
+            logger.debug(f"Skipping {label} element with invalid or too small crop") #type: ignore
+            continue
 
         # Process regular text
         if label == "text":
@@ -188,6 +201,9 @@ def process_json_file(json_path: str, img_path: str, res_dir: str) -> str:
                     logger.debug(f"Found {len(res['rec_texts'])} text segments") #type: ignore
                     for text in res['rec_texts']:
                         output["text"].append(text)
+            
+            # Clean up cropped image from memory
+            del cropped
             continue
 
         # Process formulas (ones that aren't contained in text)
@@ -199,6 +215,9 @@ def process_json_file(json_path: str, img_path: str, res_dir: str) -> str:
                 if 'rec_formula' in res:
                     logger.debug(f"Found formula: {res['rec_formula']}") #type: ignore
                     output["formulae"].append(res['rec_formula'])
+            
+            # Clean up cropped image from memory
+            del cropped
             continue
 
         # For images and tables, keep them
@@ -220,10 +239,16 @@ def process_json_file(json_path: str, img_path: str, res_dir: str) -> str:
             
             # Add the image path to the output
             output["imgs"].append(image_path)
+            
+            # Clean up cropped image from memory
+            del cropped
             continue
 
     logger.info(f"Processed {text_elements} text elements, {formula_elements} formula elements, and {image_elements} image/table elements.") #type: ignore
     logger.info(f"Skipped {skipped_formulas} formulas that were contained within text paragraphs.") #type: ignore
+    
+    # Clean up main image from memory
+    del image
     
     # Write the output to a JSON file
     output_json_path = os.path.join(res_dir, f"{base_filename}_processed.json")
