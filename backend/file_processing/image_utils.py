@@ -7,13 +7,23 @@ from typing import Optional
 # Set up logging
 logger = logging.getLogger(__name__)
 
-def copy_image_to_static(image_path: str, static_dir: str = "./static/images", preserve_structure: bool = True, deck_id: Optional[str] = None) -> Optional[str]:
+# Import PathResolver for centralized path management
+try:
+    from utils.path_resolver import PathResolver
+    path_resolver = PathResolver()
+    path_config = path_resolver.get_config()
+except ImportError:
+    logger.error("PathResolver not available - using fallback paths")
+    path_resolver = None
+    path_config = None
+
+def copy_image_to_static(image_path: str, static_dir: Optional[str] = None, preserve_structure: bool = True, deck_id: Optional[str] = None) -> Optional[str]:
     """
     Copy an image file to the static images directory and return the new path
     
     Args:
         image_path: Original path to the image file
-        static_dir: Directory to store permanent images
+        static_dir: Directory to store permanent images (uses PathResolver if None)
         preserve_structure: Whether to preserve the directory structure (e.g., ocr_results)
         deck_id: Optional deck ID to create a deck-specific folder for the image
         
@@ -23,6 +33,13 @@ def copy_image_to_static(image_path: str, static_dir: str = "./static/images", p
     if not os.path.exists(image_path):
         logger.error(f"Image not found at path: {image_path}")
         return None
+    
+    # Use PathResolver for static directory if not provided
+    if static_dir is None:
+        if path_config:
+            static_dir = path_config.images_dir
+        else:
+            static_dir = "./static/images"  # Fallback
         
     # Organize images by deck if deck_id is provided
     if deck_id:
@@ -91,7 +108,8 @@ def ensure_image_in_static(img_path: Optional[str], deck_id: Optional[str] = Non
         return None
         
     # If the image is already in the static directory, return its path
-    if os.path.normpath(img_path).startswith(os.path.normpath("./static/images")):
+    static_images_path = path_config.images_dir if path_config else "./static/images"
+    if os.path.normpath(img_path).startswith(os.path.normpath(static_images_path)):
         return img_path
         
     # Copy the image to the static directory
@@ -108,31 +126,54 @@ def update_question_image_paths(questions: list, deck_id: Optional[str] = None) 
     Returns:
         Updated list of question dictionaries
     """
-    # Import utility functions
+    # Import utility functions and prepare paths using PathResolver
     try:
         from utils.file_operations import ensure_dir
-        if deck_id:
-            ensure_dir(f"./static/images/{deck_id}/ocr_results")
+        if path_config:
+            if deck_id:
+                ocr_results_dir = os.path.join(path_config.images_dir, deck_id, "ocr_results")
+                base_static_path = os.path.join(path_config.images_dir, deck_id)
+            else:
+                ocr_results_dir = os.path.join(path_config.images_dir, "ocr_results")
+                base_static_path = path_config.images_dir
         else:
-            ensure_dir("./static/images/ocr_results")
+            # Fallback to relative paths
+            if deck_id:
+                ocr_results_dir = f"./static/images/{deck_id}/ocr_results"
+                base_static_path = f"./static/images/{deck_id}"
+            else:
+                ocr_results_dir = "./static/images/ocr_results"
+                base_static_path = "./static/images"
+        
+        ensure_dir(ocr_results_dir)
     except ImportError:
-        if deck_id:
-            os.makedirs(f"./static/images/{deck_id}/ocr_results", exist_ok=True)
+        # Fallback directory creation
+        if path_config:
+            if deck_id:
+                ocr_results_dir = os.path.join(path_config.images_dir, deck_id, "ocr_results")
+                base_static_path = os.path.join(path_config.images_dir, deck_id)
+            else:
+                ocr_results_dir = os.path.join(path_config.images_dir, "ocr_results")
+                base_static_path = path_config.images_dir
         else:
-            os.makedirs("./static/images/ocr_results", exist_ok=True)
-    
-    # Prepare base paths based on deck_id
-    base_static_path = f"./static/images/{deck_id}" if deck_id else "./static/images"
+            if deck_id:
+                ocr_results_dir = f"./static/images/{deck_id}/ocr_results"
+                base_static_path = f"./static/images/{deck_id}"
+            else:
+                ocr_results_dir = "./static/images/ocr_results"
+                base_static_path = "./static/images"
+        
+        os.makedirs(ocr_results_dir, exist_ok=True)
     
     for question in questions:
         if isinstance(question, dict) and "img_path" in question and question["img_path"]:
             original_path = question["img_path"]
             
             # Skip if already pointing to correct deck-specific directory
-            if deck_id and os.path.normpath(original_path).startswith(os.path.normpath(f"./static/images/{deck_id}")):
+            if deck_id and os.path.normpath(original_path).startswith(os.path.normpath(base_static_path)):
                 continue
             # Skip if already pointing to static directory and no deck_id specified
-            elif not deck_id and os.path.normpath(original_path).startswith(os.path.normpath("./static/images")):
+            elif not deck_id and os.path.normpath(original_path).startswith(os.path.normpath(base_static_path)):
                 continue
             
             # Handle paths from to_process directory
@@ -166,12 +207,23 @@ def update_question_image_paths(questions: list, deck_id: Optional[str] = None) 
             else:
                 # If the file doesn't exist in to_process, try fixing the path
                 # It might be that the path is already wrong
-                if deck_id:
-                    fixed_path = original_path.replace("./to_process", f"./static/images/{deck_id}")
-                    fixed_path_alt = original_path.replace("./static/images", f"./static/images/{deck_id}")
+                if path_config:
+                    processing_dir = path_config.processing_dir
+                    if deck_id:
+                        target_images_dir = os.path.join(path_config.images_dir, deck_id)
+                        fixed_path = original_path.replace("./to_process", target_images_dir)
+                        fixed_path_alt = original_path.replace("./static/images", target_images_dir)
+                    else:
+                        fixed_path = original_path.replace("./to_process", path_config.images_dir)
+                        fixed_path_alt = original_path
                 else:
-                    fixed_path = original_path.replace("./to_process", "./static/images")
-                    fixed_path_alt = original_path
+                    # Fallback to relative paths
+                    if deck_id:
+                        fixed_path = original_path.replace("./to_process", f"./static/images/{deck_id}")
+                        fixed_path_alt = original_path.replace("./static/images", f"./static/images/{deck_id}")
+                    else:
+                        fixed_path = original_path.replace("./to_process", "./static/images")
+                        fixed_path_alt = original_path
                 
                 # Check possible fixed paths
                 if os.path.exists(fixed_path):
@@ -190,7 +242,10 @@ def update_question_image_paths(questions: list, deck_id: Optional[str] = None) 
                         logger.info(f"Found image by name: {potential_path}")
                     else:
                         # If we can find the file in the non-deck-specific location, copy it to the deck folder
-                        old_path = f"./static/images/ocr_results/{filename}"
+                        if path_config:
+                            old_path = os.path.join(path_config.images_dir, "ocr_results", filename)
+                        else:
+                            old_path = f"./static/images/ocr_results/{filename}"
                         if deck_id and os.path.exists(old_path):
                             try:
                                 os.makedirs(os.path.dirname(potential_path), exist_ok=True)

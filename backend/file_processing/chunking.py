@@ -5,6 +5,16 @@ from utils.logger_config import get_logger
 # Get the shared logger instance
 logger = get_logger()
 
+# Import PathResolver for centralized path management
+try:
+    from utils.path_resolver import PathResolver
+    path_resolver = PathResolver()
+    path_config = path_resolver.get_config()
+except ImportError:
+    logger.error("PathResolver not available - using fallback paths")
+    path_resolver = None
+    path_config = None
+
 model = LayoutDetection(model_name="PP-DocLayout_plus-L")
 
 def chunk_files(base_dir: str):
@@ -24,6 +34,10 @@ def chunk_files(base_dir: str):
                 ...
     """
     logger.info(f"Starting chunking of images from {base_dir}") #type: ignore
+    
+    # Resolve base directory path using PathResolver if available
+    if path_resolver and not os.path.isabs(base_dir):
+        base_dir = path_resolver.resolve_path(base_dir)
     
     # Check if base directory exists
     if not os.path.exists(base_dir):
@@ -53,8 +67,12 @@ def chunk_files(base_dir: str):
         # Create output directories for this document
         doc_json_dir = os.path.join(doc_path, "json")
         doc_output_img_dir = os.path.join(doc_path, "processed_images")
-        os.makedirs(doc_json_dir, exist_ok=True)
-        os.makedirs(doc_output_img_dir, exist_ok=True)
+        if path_resolver:
+            path_resolver.ensure_directory_exists(doc_json_dir)
+            path_resolver.ensure_directory_exists(doc_output_img_dir)
+        else:
+            os.makedirs(doc_json_dir, exist_ok=True)
+            os.makedirs(doc_output_img_dir, exist_ok=True)
         
         # Get all images for this document
         images = [f for f in os.listdir(images_path) if os.path.isfile(os.path.join(images_path, f))]

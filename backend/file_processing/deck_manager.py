@@ -9,6 +9,16 @@ from typing import List, Dict, Any, Optional
 # Set up basic logging
 logger = logging.getLogger(__name__)
 
+# Import PathResolver for centralized path management
+try:
+    from utils.path_resolver import PathResolver
+    path_resolver = PathResolver()
+    path_config = path_resolver.get_config()
+except ImportError:
+    logger.error("PathResolver not available - using fallback paths")
+    path_resolver = None
+    path_config = None
+
 # Import image utilities
 try:
     from .image_utils import update_question_image_paths
@@ -119,19 +129,25 @@ def create_unified_deck(questions_list: List[Any],
     
     return deck
 
-def save_deck_to_file(deck: Dict[str, Any], decks_dir: str = "./decks") -> str:
+def save_deck_to_file(deck: Dict[str, Any], decks_dir: Optional[str] = None) -> str:
     """
     Save a deck to a JSON file in the decks directory
     
     Args:
         deck: The deck dictionary to save
-        decks_dir: Directory to save the deck
+        decks_dir: Directory to save the deck, uses absolute path from app config if None
         
     Returns:
         Path to the saved deck file
     """
     # Import utility function for directory creation
     from utils.file_operations import ensure_dir
+    
+    # If no decks directory specified, get the global one from app configuration
+    if decks_dir is None:
+        # Get the application base directory
+        app_base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        decks_dir = os.path.join(app_base_dir, "decks")
     
     # Create decks directory if it doesn't exist
     ensure_dir(decks_dir)
@@ -160,14 +176,24 @@ def cleanup_processing_directory(base_dir: str, keep_questions: bool = False, de
     try:
         from .image_utils import copy_image_to_static
         
-        # Create static images directory with optional deck subfolder
-        if deck_id:
-            static_base_dir = f"./static/images/{deck_id}"
-            static_images_dir = static_base_dir
-            static_ocr_dir = f"{static_base_dir}/ocr_results"
+        # Create static images directory with optional deck subfolder using PathResolver
+        if path_config:
+            if deck_id:
+                static_base_dir = os.path.join(path_config.images_dir, deck_id)
+                static_images_dir = static_base_dir
+                static_ocr_dir = os.path.join(static_base_dir, "ocr_results")
+            else:
+                static_images_dir = path_config.images_dir
+                static_ocr_dir = os.path.join(path_config.images_dir, "ocr_results")
         else:
-            static_images_dir = "./static/images"
-            static_ocr_dir = "./static/images/ocr_results"
+            # Fallback to relative paths
+            if deck_id:
+                static_base_dir = f"./static/images/{deck_id}"
+                static_images_dir = static_base_dir
+                static_ocr_dir = f"{static_base_dir}/ocr_results"
+            else:
+                static_images_dir = "./static/images"
+                static_ocr_dir = "./static/images/ocr_results"
             
         os.makedirs(static_images_dir, exist_ok=True)
         os.makedirs(static_ocr_dir, exist_ok=True)

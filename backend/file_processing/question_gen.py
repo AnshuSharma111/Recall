@@ -13,6 +13,16 @@ from typing import Optional, Dict, Any, List, Union
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Import PathResolver for centralized path management
+try:
+    from utils.path_resolver import PathResolver
+    path_resolver = PathResolver()
+    path_config = path_resolver.get_config()
+except ImportError:
+    logger.error("PathResolver not available - using fallback paths")
+    path_resolver = None
+    path_config = None
+
 # Import Groq for API calls
 try:
     from groq import Groq
@@ -896,13 +906,22 @@ def process_document_questions(base_dir: str, deck_name: Optional[str] = None) -
                 processed_questions = []
                 
                 # First, make sure the static directories exist
-                # Group images by deck ID
-                if deck_id:
-                    static_images_dir = f"./static/images/{deck_id}"
-                    static_ocr_dir = f"./static/images/{deck_id}/ocr_results"
+                # Group images by deck ID using PathResolver
+                if path_config:
+                    if deck_id:
+                        static_images_dir = os.path.join(path_config.images_dir, deck_id)
+                        static_ocr_dir = os.path.join(path_config.images_dir, deck_id, "ocr_results")
+                    else:
+                        static_images_dir = path_config.images_dir
+                        static_ocr_dir = os.path.join(path_config.images_dir, "ocr_results")
                 else:
-                    static_images_dir = "./static/images"
-                    static_ocr_dir = "./static/images/ocr_results"
+                    # Fallback to relative paths if PathResolver not available
+                    if deck_id:
+                        static_images_dir = f"./static/images/{deck_id}"
+                        static_ocr_dir = f"./static/images/{deck_id}/ocr_results"
+                    else:
+                        static_images_dir = "./static/images"
+                        static_ocr_dir = "./static/images/ocr_results"
                     
                 ensure_dir(static_images_dir)
                 ensure_dir(static_ocr_dir)
@@ -959,10 +978,17 @@ def process_document_questions(base_dir: str, deck_name: Optional[str] = None) -
                                 img_path = q.get("img_path")
                                 if img_path and "to_process" in img_path:
                                     # Attempt to fix the path, using deck-specific folder if provided
-                                    if deck_id:
-                                        fixed_path = img_path.replace("./to_process", f"./static/images/{deck_id}")
+                                    if path_config:
+                                        if deck_id:
+                                            fixed_path = img_path.replace("./to_process", os.path.join(path_config.images_dir, deck_id))
+                                        else:
+                                            fixed_path = img_path.replace("./to_process", path_config.images_dir)
                                     else:
-                                        fixed_path = img_path.replace("./to_process", "./static/images")
+                                        # Fallback to relative paths
+                                        if deck_id:
+                                            fixed_path = img_path.replace("./to_process", f"./static/images/{deck_id}")
+                                        else:
+                                            fixed_path = img_path.replace("./to_process", "./static/images")
                                     logger.info(f"Fixing image path: {img_path} -> {fixed_path}")
                                     q["img_path"] = fixed_path
                                     path_issues += 1
@@ -980,8 +1006,12 @@ def process_document_questions(base_dir: str, deck_name: Optional[str] = None) -
                 deck_id=deck_id
             )
             
-            # Save the deck to the decks directory
-            deck_path = save_deck_to_file(unified_deck, decks_dir="./decks")
+            # Find the absolute path to the project root (two levels up from this file)
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            decks_dir = os.path.join(project_root, "decks")
+            
+            # Save the deck to the absolute decks directory
+            deck_path = save_deck_to_file(unified_deck, decks_dir=decks_dir)
             
             # Add the unified deck info to the results
             results["unified_deck"] = {

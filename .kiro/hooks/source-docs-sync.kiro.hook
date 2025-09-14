@@ -1,0 +1,24 @@
+{
+  "enabled": true,
+  "name": "Source Code Documentation Sync",
+  "description": "Monitors all source files (C++, Python) and related configuration files for changes, then updates documentation in README.md or /docs folder and maintains accurate requirements.txt when dependencies change",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "*.cpp",
+      "*.h",
+      "*.py",
+      "CMakeLists.txt",
+      "*.qrc",
+      "backend/requirements.txt",
+      "backend/.env",
+      "backend/server.py",
+      "testing/*.py"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Source code files have been modified. Please analyze the changes and: 1) Update the README.md or relevant documentation in the /docs folder to reflect any new features, API changes, or architectural modifications. 2) If new Python dependencies were added or removed, update the backend/requirements.txt file to ensure it contains all necessary packages with appropriate versions. 3) Ensure documentation accurately describes the current state of the codebase including both the C++ Qt frontend and Python backend components."
+  }
+}

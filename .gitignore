@@ -67,6 +67,8 @@ CMakeLists.txt.user*
 
 # Python byte code
 *.pyc
+__pycache__/
+*/__pycache__/
 
 # Binaries
 # --------

@@ -10,6 +10,16 @@ from utils.logger_config import get_logger
 # Get the shared logger instance
 logger = get_logger()
 
+# Import PathResolver for centralized path management
+try:
+    from utils.path_resolver import PathResolver
+    path_resolver = PathResolver()
+    path_config = path_resolver.get_config()
+except ImportError:
+    logger.error("PathResolver not available - using fallback paths")
+    path_resolver = None
+    path_config = None
+
 # Initialize the OCR models
 text_ocr = PaddleOCR(lang='en')  # For general text
 formula_ocr = FormulaRecognition(model_name="PP-FormulaNet_plus-M")  # For formulas
@@ -22,10 +32,15 @@ def load_json_boxes(json_path: str) -> Dict:
 def get_image_path(json_data: Dict) -> str:
     """Get the path to the original image from JSON data."""
     input_path = json_data.get('input_path', '')
-    # If the path is relative, convert to absolute
+    # If the path is relative, convert to absolute using PathResolver
     if not os.path.isabs(input_path):
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        input_path = os.path.join(base_dir, input_path)
+        if path_config:
+            # Use PathResolver to get the correct project root
+            input_path = os.path.join(path_config.project_root, input_path)
+        else:
+            # Fallback to old method
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            input_path = os.path.join(base_dir, input_path)
     return input_path
 
 def crop_image(image: np.ndarray, coordinates: List[float]) -> np.ndarray:
@@ -194,6 +209,12 @@ def process_json_file(json_path: str, img_path: str, res_dir: str) -> str:
             image_filename = f"{base_filename}_{label}_{image_elements}.png"
             image_path = os.path.join(res_dir, image_filename)
             
+            # Ensure the output directory exists using PathResolver
+            if path_resolver:
+                path_resolver.ensure_directory_exists(res_dir)
+            else:
+                os.makedirs(res_dir, exist_ok=True)
+            
             # Save the cropped image
             cv2.imwrite(image_path, cropped)
             
@@ -238,6 +259,10 @@ def process_document_dir(base_dir: str):
     """
     logger.info(f"Starting OCR processing of documents from {base_dir}") #type: ignore
     
+    # Resolve base directory path using PathResolver if available
+    if path_resolver and not os.path.isabs(base_dir):
+        base_dir = path_resolver.resolve_path(base_dir)
+    
     # Check if base directory exists
     if not os.path.exists(base_dir):
         logger.error(f"Base directory {base_dir} does not exist!") #type: ignore
@@ -270,7 +295,10 @@ def process_document_dir(base_dir: str):
         
         # Create output directory for OCR results
         ocr_results_dir = os.path.join(doc_path, "ocr_results")
-        os.makedirs(ocr_results_dir, exist_ok=True)
+        if path_resolver:
+            path_resolver.ensure_directory_exists(ocr_results_dir)
+        else:
+            os.makedirs(ocr_results_dir, exist_ok=True)
         
         # Get all JSON files for this document
         json_files = [f for f in os.listdir(json_path) if f.endswith('.json')]
